@@ -41,3 +41,21 @@ Date: 2026-03-22
 Status: PASS
 Test results: 775 passed, 0 failed (previous 725 + 50 transfer)
 Notes: Data transfer opcodes: MOV variants, PUSH/POP, XCHG, LEA, LDS, LES, CBW, CWD, XLAT, LAHF, SAHF, PUSHF, POPF. Stack helpers (stack_push/stack_pop) designed for reuse by CALL/RET/INT. FLAGS pack/unpack with 8086 reserved bits. SAHF only affects low 8 bits of FLAGS. LEA extracts offset by subtracting segment base from linear address.
+
+## EMU-08
+Date: 2026-03-22
+Status: PASS
+Test results: 856 passed, 0 failed (previous 775 + 81 string)
+Notes: String opcodes: MOVSB/W, CMPSB/W, STOSB/W, LODSB/W, SCASB/W. REP/REPZ/REPNZ loop handling with CX countdown. Segment override applies to source (DS:SI) only; destination always ES:DI. Direction flag controls increment/decrement.
+
+## EMU-09
+Date: 2026-03-22
+Status: PASS
+Test results: 941 passed, 0 failed (previous 856 + 85 control)
+Notes: Control flow opcodes: JMP (5 variants), Jcc (all 16 conditions), CALL (4 variants), RET/RETF (with/without imm16), INT/INT3/INTO/IRET, LOOP/LOOPZ/LOOPNZ/JCXZ. Added ip_changed field to DecodeContext. pc_interrupt helper for INT and hardware interrupt delivery. All relative jumps are relative to next instruction IP.
+
+## EMU-10
+Date: 2026-03-22
+Status: PASS
+Test results: 1016 passed, 0 failed (previous 941 + 75 flags_io)
+Notes: Flag manipulation (CLC/STC/CMC/CLI/STI/CLD/STD), I/O ports (IN/OUT 8 variants), HLT, SALC, prefix handlers (segment override, REP), and BIOS calls (PUTCHAR via ring buffer, GET_RTC, DISK_READ/WRITE via platform callbacks). io_port_write_hook stub for future device emulation.
