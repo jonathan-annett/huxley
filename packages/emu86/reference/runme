@@ -1,0 +1,10 @@
+#!/bin/sh
+clear
+stty cbreak raw -echo min 0
+if [ -f ../test/images/hd.img ]
+then
+    ./8086tiny bios ../test/images/freedos.img bios ../test/images/hd.img
+else
+    ./8086tiny bios ../test/images/freedos.img
+fi
+stty cooked echo
