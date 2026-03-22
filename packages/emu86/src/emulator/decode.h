@@ -54,6 +54,9 @@ typedef struct {
     int32_t  scratch_int;
     uint8_t  scratch_uchar;
 
+    /* --- Control flow --- */
+    uint8_t  ip_changed;     /* set to 1 by control flow instructions */
+
 } DecodeContext;
 
 /* ================================================================
