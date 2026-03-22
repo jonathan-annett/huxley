@@ -1,0 +1,4 @@
+TODO: Choose a license for the Lite project.
+
+The packages/emu86/reference/ directory contains code from 8086tiny by Adrian Cable,
+licensed under the MIT License. See packages/emu86/reference/LICENSE for details.

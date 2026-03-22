@@ -1,0 +1,44 @@
+# Build artifacts
+*.o
+*.wasm
+*.js.mem
+dist/
+build/
+
+# Disk images (large binaries — fetch with images/fetch-images.sh)
+images/*.img
+images/*.img.gz
+images/*.zip
+!images/.gitkeep
+!images/fetch-images.sh
+
+# Test disk images
+packages/emu86/test/images/*.img
+packages/emu86/test/images/*.img.gz
+!packages/emu86/test/images/.gitkeep
+
+# Node
+node_modules/
+package-lock.json
+
+# Editor build output
+packages/editor/client/dist/
+packages/editor/server/dist/
+
+# Emscripten cache and output
+packages/emu86/dist/
+.emscripten_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled reference build
+packages/emu86/reference/8086tiny
