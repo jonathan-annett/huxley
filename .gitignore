@@ -42,3 +42,7 @@ Thumbs.db
 
 # Compiled reference build
 packages/emu86/reference/8086tiny
+
+# Compiled test binaries
+packages/emu86/test/unit/test_snapshot
+packages/emu86/test/unit/test_ringbuf

@@ -25,12 +25,20 @@ wasm:
 
 # --- Tests ---
 .PHONY: test
-test:
-	@echo "TODO: Not yet implemented. See EMU-02 onwards."
+test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit:
-	@echo "TODO: Not yet implemented."
+test-unit: test-snapshot test-ringbuf
+
+.PHONY: test-snapshot
+test-snapshot:
+	$(CC) $(CFLAGS) -o test/unit/test_snapshot test/unit/test_snapshot.c
+	./test/unit/test_snapshot
+
+.PHONY: test-ringbuf
+test-ringbuf:
+	$(CC) $(CFLAGS) -o test/unit/test_ringbuf test/unit/test_ringbuf.c
+	./test/unit/test_ringbuf
 
 .PHONY: test-integration
 test-integration:
@@ -42,4 +50,4 @@ clean:
 	rm -f reference/8086tiny
 	rm -f src/emulator/*.o
 	rm -rf dist/
-	rm -f test/unit/*.o test/unit/test_*
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf
