@@ -10,7 +10,8 @@
       "Bash(rm -rf /tmp/8086tiny)",
       "Bash(make reference-build:*)",
       "Bash(gcc:*)",
-      "Bash(make clean:*)"
+      "Bash(make clean:*)",
+      "Bash(make test-unit:*)"
     ]
   }
 }
