@@ -28,7 +28,7 @@ wasm:
 test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer
+test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io
 
 .PHONY: test-snapshot
 test-snapshot:
@@ -65,6 +65,21 @@ test-shift:
 	$(CC) $(CFLAGS) -o test/unit/test_shift test/unit/test_shift.c
 	./test/unit/test_shift
 
+.PHONY: test-string
+test-string:
+	$(CC) $(CFLAGS) -o test/unit/test_string test/unit/test_string.c
+	./test/unit/test_string
+
+.PHONY: test-control
+test-control:
+	$(CC) $(CFLAGS) -o test/unit/test_control test/unit/test_control.c
+	./test/unit/test_control
+
+.PHONY: test-flags-io
+test-flags-io:
+	$(CC) $(CFLAGS) -o test/unit/test_flags_io test/unit/test_flags_io.c
+	./test/unit/test_flags_io
+
 .PHONY: test-integration
 test-integration:
 	@echo "TODO: Not yet implemented."
@@ -75,4 +90,4 @@ clean:
 	rm -f reference/8086tiny
 	rm -f src/emulator/*.o
 	rm -rf dist/
-	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io
