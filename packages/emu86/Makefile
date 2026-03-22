@@ -16,7 +16,13 @@ reference-build:
 # --- Main emulator build ---
 .PHONY: build
 build:
-	@echo "TODO: Not yet implemented. See EMU-02 onwards."
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c src/emulator/run.c -o build/run.o -Isrc/emulator
+	$(CC) $(CFLAGS) -c src/emulator/snapshot.c -o build/snapshot.o -Isrc/emulator
+
+.PHONY: lib
+lib: build
+	ar rcs build/libemu86.a build/run.o build/snapshot.o
 
 # --- WASM build ---
 .PHONY: wasm
@@ -28,7 +34,7 @@ wasm:
 test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io
+test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io test-run
 
 .PHONY: test-snapshot
 test-snapshot:
@@ -80,6 +86,11 @@ test-flags-io:
 	$(CC) $(CFLAGS) -o test/unit/test_flags_io test/unit/test_flags_io.c
 	./test/unit/test_flags_io
 
+.PHONY: test-run
+test-run:
+	$(CC) $(CFLAGS) -o test/unit/test_run test/unit/test_run.c src/emulator/run.c -Isrc/emulator
+	./test/unit/test_run
+
 .PHONY: test-integration
 test-integration:
 	@echo "TODO: Not yet implemented."
@@ -90,4 +101,4 @@ clean:
 	rm -f reference/8086tiny
 	rm -f src/emulator/*.o
 	rm -rf dist/
-	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run

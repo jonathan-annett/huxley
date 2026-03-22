@@ -228,7 +228,7 @@ exec_rcr(Emu86State *s, DecodeContext *d, uint8_t count)
 static inline void
 exec_shift_rotate(Emu86State *s, DecodeContext *d, uint8_t count)
 {
-    switch (d->extra) {
+    switch (d->reg) { /* reg field from ModRM selects the operation */
         case 0: exec_rol(s, d, count); break;
         case 1: exec_ror(s, d, count); break;
         case 2: exec_rcl(s, d, count); break;

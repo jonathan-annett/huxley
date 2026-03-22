@@ -59,3 +59,9 @@ Date: 2026-03-22
 Status: PASS
 Test results: 1016 passed, 0 failed (previous 941 + 75 flags_io)
 Notes: Flag manipulation (CLC/STC/CMC/CLI/STI/CLD/STD), I/O ports (IN/OUT 8 variants), HLT, SALC, prefix handlers (segment override, REP), and BIOS calls (PUTCHAR via ring buffer, GET_RTC, DISK_READ/WRITE via platform callbacks). io_port_write_hook stub for future device emulation.
+
+## EMU-11
+Date: 2026-03-23
+Status: PASS
+Test results: 1316 passed, 0 failed (previous 1016 + 300 run)
+Notes: Complete run loop with emu86_run() and emu86_step_single(). Unity build in run.c includes all opcode headers. Full opcode dispatch switch covering all xlat cases 0-48 plus 53 (HLT/LOCK). Key fixes during implementation: HLT maps to xlat=53 (not in original 0-48 range), segment override extra values use original numbering (8-11, converted to 0-3), case 14 JMP/CALL needs manual inst_length since table base_size=0, INT cases need explicit inst_length for correct return address. Tests include: basic execution, arithmetic, conditional jumps, loops, stack, CALL/RET, software interrupts, REP string ops, Fibonacci program, and memory fill.
