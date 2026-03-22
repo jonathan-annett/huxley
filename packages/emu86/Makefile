@@ -28,7 +28,7 @@ wasm:
 test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit: test-snapshot test-ringbuf test-decode
+test-unit: test-snapshot test-ringbuf test-decode test-arithmetic
 
 .PHONY: test-snapshot
 test-snapshot:
@@ -45,6 +45,11 @@ test-decode:
 	$(CC) $(CFLAGS) -o test/unit/test_decode test/unit/test_decode.c
 	./test/unit/test_decode
 
+.PHONY: test-arithmetic
+test-arithmetic:
+	$(CC) $(CFLAGS) -o test/unit/test_arithmetic test/unit/test_arithmetic.c
+	./test/unit/test_arithmetic
+
 .PHONY: test-integration
 test-integration:
 	@echo "TODO: Not yet implemented."
@@ -55,4 +60,4 @@ clean:
 	rm -f reference/8086tiny
 	rm -f src/emulator/*.o
 	rm -rf dist/
-	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic
