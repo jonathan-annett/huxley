@@ -190,7 +190,7 @@ execute_instruction(Emu86State *s, Emu86Platform *p,
             imm = (uint16_t)(int16_t)(int8_t)(d->data2 & 0xFF);
         else
             imm = (uint16_t)d->data2;
-        d->inst_length += sign_ext ? 1 : 2;
+        d->inst_length += (sign_ext ? 1 : 2) - (d->operand_width + 1);
         exec_alu_imm(s, d, d->reg, imm);
         break;
     }

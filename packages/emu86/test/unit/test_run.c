@@ -395,6 +395,131 @@ TEST(run_fibonacci)
     teardown();
 }
 
+/* === ALU r/m, imm (0x80-0x83) — regression tests for EMU-13 ===
+ *
+ * The decoder computes inst_length linearly via `iw_size*(operand_width+1)`,
+ * which for this group always counts 2 bytes of immediate (or 1 for w=0).
+ * But the real immediate size depends on the sign_ext bit:
+ *   0x80 (w=0,d=0) → 1-byte imm       (decoder counted 1; needs 0 delta)
+ *   0x81 (w=1,d=0) → 2-byte imm       (decoder counted 2; needs 0 delta)
+ *   0x82 (w=0,d=1) → 1-byte imm       (decoder counted 1; needs 0 delta)
+ *   0x83 (w=1,d=1) → 1-byte imm s-ext (decoder counted 2; needs -1 delta)
+ * The pre-fix code added `sign_ext ? 1 : 2` on TOP of the decoder's count,
+ * overcounting by exactly (operand_width+1). These tests each fail under
+ * the old code (IP skips past HLT, yielding BUDGET instead of HALTED).
+ */
+
+TEST(run_alu_imm_80_add_al_reg)
+{
+    setup();
+    uint8_t code[] = { 0x80, 0xC0, 0x42, 0xF4 }; /* ADD AL, 0x42; HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ((uint8_t)state->regs[REG_AX], 0x42);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_alu_imm_81_add_ax_reg)
+{
+    setup();
+    uint8_t code[] = { 0x81, 0xC0, 0x34, 0x12, 0xF4 }; /* ADD AX, 0x1234; HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 0x1234);
+    ASSERT_EQ(state->ip, 0x7C05);
+    teardown();
+}
+
+TEST(run_alu_imm_82_add_bl_reg)
+{
+    /* 0x82 is an undocumented alias of 0x80 that must still decode correctly
+     * — a future regression could easily skip this opcode. */
+    setup();
+    uint8_t code[] = { 0x82, 0xC3, 0xFF, 0xF4 }; /* ADD BL, 0xFF; HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ((uint8_t)state->regs[REG_BX], 0xFF);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_alu_imm_83_add_ax_signext)
+{
+    setup();
+    uint8_t code[] = { 0x83, 0xC0, 0x01, 0xF4 }; /* ADD AX, 1 (sign-ext); HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 1);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_alu_imm_83_sub_ax)
+{
+    /* Exercises the `reg` (sub-function) dispatch within the 0x80-0x83 family:
+     * modrm=E8 → reg=5 = SUB, not ADD. */
+    setup();
+    state->regs[REG_AX] = 5;
+    uint8_t code[] = { 0x83, 0xE8, 0x01, 0xF4 }; /* SUB AX, 1; HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 4);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_alu_imm_81_mem_direct)
+{
+    /* Memory operand, mod=0 rm=6 → direct 16-bit address (no disp register). */
+    setup();
+    uint8_t code[] = { 0x81, 0x06, 0x00, 0x02, 0x34, 0x12, 0xF4 };
+    /* ADD word [0x0200], 0x1234; HLT — 6 bytes for the ADD, 1 for HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->mem[0x0200], 0x34);
+    ASSERT_EQ(state->mem[0x0201], 0x12);
+    ASSERT_EQ(state->ip, 0x7C07);
+    teardown();
+}
+
+TEST(run_alu_imm_80_mem_disp8)
+{
+    /* Memory operand, mod=1 rm=7 → [BX+disp8]. */
+    setup();
+    state->regs[REG_BX] = 0x0300;
+    uint8_t code[] = { 0x80, 0x47, 0x05, 0x10, 0xF4 };
+    /* ADD byte [BX+5], 0x10; HLT — 4 bytes for the ADD, 1 for HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->mem[0x0305], 0x10);
+    ASSERT_EQ(state->ip, 0x7C05);
+    teardown();
+}
+
+TEST(run_alu_imm_81_mem_disp16)
+{
+    /* Memory operand, mod=2 rm=7 → [BX+disp16]. */
+    setup();
+    state->regs[REG_BX] = 0x0200;
+    uint8_t code[] = { 0x81, 0x87, 0x00, 0x01, 0x34, 0x12, 0xF4 };
+    /* ADD word [BX+0x0100], 0x1234; HLT — 6 bytes for the ADD, 1 for HLT */
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->mem[0x0300], 0x34);
+    ASSERT_EQ(state->mem[0x0301], 0x12);
+    ASSERT_EQ(state->ip, 0x7C07);
+    teardown();
+}
+
 /* === Memory fill === */
 
 TEST(run_memory_fill)
@@ -437,6 +562,14 @@ int main(void)
     RUN_TEST(run_interrupt_when_if_clear);
     RUN_TEST(run_rep_movsb);
     RUN_TEST(run_fibonacci);
+    RUN_TEST(run_alu_imm_80_add_al_reg);
+    RUN_TEST(run_alu_imm_81_add_ax_reg);
+    RUN_TEST(run_alu_imm_82_add_bl_reg);
+    RUN_TEST(run_alu_imm_83_add_ax_signext);
+    RUN_TEST(run_alu_imm_83_sub_ax);
+    RUN_TEST(run_alu_imm_81_mem_direct);
+    RUN_TEST(run_alu_imm_80_mem_disp8);
+    RUN_TEST(run_alu_imm_81_mem_disp16);
     RUN_TEST(run_memory_fill);
 
     printf("\n%d passed, %d failed\n", test_passes, test_failures);

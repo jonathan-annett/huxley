@@ -78,3 +78,10 @@ Date: 2026-03-23 (implemented), 2026-04-21 (triaged)
 Status: PARTIAL — committed, boot blocked pending opcode fix
 Test results: 1560 unit passed, 0 failed. Boot: FreeDOS BLOCKED, ELKs BLOCKED (downstream of same bug).
 Notes: Linux host implementation complete — CLI entry, termios raw mode, disk I/O, timer, snapshot I/O, signal handling, all unit tested. Triage identified and fixed PUSH/POP sreg dispatch bug (cases 25/26 in run.c mis-indexed sregs[]). Second bug in 0x80–0x83 ALU-imm length calculation identified, not fixed — separate task. See tasks/triage/emu12-triage-report.md for full investigation, including latent concerns flagged for future attention.
+
+## EMU-13
+Date: 2026-04-21
+Status: PASS
+Test results: 329 passed, 0 failed in test_run (up from 303) — 8 new tests covering all four 0x80-0x83 opcodes with register-direct and memory modrm variants (26 new assertions). Full suite still green.
+Boot test: FreeDOS fails with a new symptom — the fix unblocks reach_stack_stc, execution advances from 209 instructions (pre-fix, broken IRET) to 156,246 instructions (post-fix) before ending at CS:IP=0:0. This matches the triage's prediction for outcome (b): register-memory mapping gap at 0xF0000 or some other latent issue now surfaces deeper in the boot path.
+Notes: Fixed ALU-imm instruction length overcount for opcodes 0x80-0x83 in run.c case 8. Root cause: the decoder's linear length formula counts `iw_size * (operand_width + 1)` bytes for the immediate, then case 8 added 1 or 2 more bytes on top (instead of replacing). Fix: subtract the decoder's overcount before adding the real immediate size — `(sign_ext ? 1 : 2) - (d->operand_width + 1)`. For 0x80/0x81/0x82 the delta is 0 (real size matches decoder guess); for 0x83 the delta is -1 (decoder counted a 2-byte immediate but 0x83's is sign-extended from 1 byte). Added 8 regression tests in test_run.c covering all four opcodes with mod=3 (register-direct) and memory modrm variants (mod=0 rm=6 direct, mod=1 disp8, mod=2 disp16). Verified tests fail against unpatched code (revert-and-re-test) — all 8 flip from HALTED to BUDGET with wrong IP.
