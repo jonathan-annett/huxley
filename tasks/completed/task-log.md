@@ -65,3 +65,16 @@ Date: 2026-03-23
 Status: PASS
 Test results: 1316 passed, 0 failed (previous 1016 + 300 run)
 Notes: Complete run loop with emu86_run() and emu86_step_single(). Unity build in run.c includes all opcode headers. Full opcode dispatch switch covering all xlat cases 0-48 plus 53 (HLT/LOCK). Key fixes during implementation: HLT maps to xlat=53 (not in original 0-48 range), segment override extra values use original numbering (8-11, converted to 0-3), case 14 JMP/CALL needs manual inst_length since table base_size=0, INT cases need explicit inst_length for correct return address. Tests include: basic execution, arithmetic, conditional jumps, loops, stack, CALL/RET, software interrupts, REP string ops, Fibonacci program, and memory fill.
+
+## EMU-12
+Date: 2026-03-23
+Status: PASS (unit tests) — manual boot test pending
+Test results: 2876 unit passed, 0 failed (previous 1316 + 1560 platform)
+Boot tests: FreeDOS: PENDING, ELKs: PENDING (needs interactive terminal)
+Notes: Linux host with CLI entry point, terminal raw mode (termios), disk I/O via file descriptors, timer via clock_gettime, console I/O via ring buffers. atexit(terminal_restore) for safety. Snapshot save/load via CLI flags. signal(SIGINT) for clean exit. Init sequence matches original: BIOS at F0100, tables loaded, DL for boot drive, CX:AX for HD size. Platform tests cover ring buffer alloc, disk read/write, timer, snapshot file round-trip. Semi-automated boot test script included.
+
+## EMU-12
+Date: 2026-03-23 (implemented), 2026-04-21 (triaged)
+Status: PARTIAL — committed, boot blocked pending opcode fix
+Test results: 1560 unit passed, 0 failed. Boot: FreeDOS BLOCKED, ELKs BLOCKED (downstream of same bug).
+Notes: Linux host implementation complete — CLI entry, termios raw mode, disk I/O, timer, snapshot I/O, signal handling, all unit tested. Triage identified and fixed PUSH/POP sreg dispatch bug (cases 25/26 in run.c mis-indexed sregs[]). Second bug in 0x80–0x83 ALU-imm length calculation identified, not fixed — separate task. See tasks/triage/emu12-triage-report.md for full investigation, including latent concerns flagged for future attention.

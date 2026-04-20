@@ -250,6 +250,30 @@ TEST(run_push_pop)
     teardown();
 }
 
+/* Regression: PUSH/POP sreg dispatch must map original's extra (8..11)
+ * to our sregs index (0..3). A prior bug passed extra straight through,
+ * so POP DS wrote out of bounds and DS stayed zero — which broke BIOS
+ * IVT setup (mov cx, [itbl_size] with DS=0 read zeros). */
+TEST(run_push_pop_sreg_dispatch)
+{
+    setup();
+    state->sregs[SREG_ES] = 0x1234;
+    state->sregs[SREG_DS] = 0x5678;
+    uint8_t code[] = {
+        0x06,   /* PUSH ES (0x1234) */
+        0x1F,   /* POP DS  -> DS should become 0x1234 */
+        0x1E,   /* PUSH DS (now 0x1234) */
+        0x07,   /* POP ES  -> ES should still be 0x1234 */
+        0xF4,   /* HLT */
+    };
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->sregs[SREG_DS], 0x1234);
+    ASSERT_EQ(state->sregs[SREG_ES], 0x1234);
+    teardown();
+}
+
 TEST(run_call_ret)
 {
     setup();
@@ -407,6 +431,7 @@ int main(void)
     RUN_TEST(run_compare_and_no_jump);
     RUN_TEST(run_loop_counter);
     RUN_TEST(run_push_pop);
+    RUN_TEST(run_push_pop_sreg_dispatch);
     RUN_TEST(run_call_ret);
     RUN_TEST(run_software_int);
     RUN_TEST(run_interrupt_when_if_clear);

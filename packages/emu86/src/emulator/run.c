@@ -369,11 +369,12 @@ execute_instruction(Emu86State *s, Emu86Platform *p,
         break;
 
     case 25: /* PUSH segment register */
-        exec_push_sreg(s, d->extra);
+        /* extra uses original's numbering: 8=ES, 9=CS, 10=SS, 11=DS */
+        exec_push_sreg(s, d->extra - 8);
         break;
 
     case 26: /* POP segment register */
-        exec_pop_sreg(s, d->extra);
+        exec_pop_sreg(s, d->extra - 8);
         break;
 
     case 27: /* Segment override prefixes (26/2E/36/3E) */

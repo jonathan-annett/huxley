@@ -24,6 +24,23 @@ build:
 lib: build
 	ar rcs build/libemu86.a build/run.o build/snapshot.o
 
+# --- Linux CLI tool ---
+emu86: src/emulator/run.c src/emulator/snapshot.c src/hosts/linux/main.c src/hosts/linux/platform_linux.c
+	$(CC) $(CFLAGS) -o emu86 \
+		src/hosts/linux/main.c \
+		src/hosts/linux/platform_linux.c \
+		src/emulator/run.c \
+		src/emulator/snapshot.c \
+		-Isrc/emulator -Isrc/hosts/linux
+
+.PHONY: run-freedos
+run-freedos: emu86
+	./emu86 reference/bios test/images/freedos.img
+
+.PHONY: run-elks
+run-elks: emu86
+	./emu86 reference/bios test/images/fd1440-minix.img
+
 # --- WASM build ---
 .PHONY: wasm
 wasm:
@@ -34,7 +51,7 @@ wasm:
 test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io test-run
+test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io test-run test-platform
 
 .PHONY: test-snapshot
 test-snapshot:
@@ -91,6 +108,11 @@ test-run:
 	$(CC) $(CFLAGS) -o test/unit/test_run test/unit/test_run.c src/emulator/run.c -Isrc/emulator
 	./test/unit/test_run
 
+.PHONY: test-platform
+test-platform:
+	$(CC) $(CFLAGS) -o test/unit/test_platform_linux test/unit/test_platform_linux.c -Isrc/emulator -Isrc/hosts/linux
+	./test/unit/test_platform_linux
+
 .PHONY: test-integration
 test-integration:
 	@echo "TODO: Not yet implemented."
@@ -98,7 +120,7 @@ test-integration:
 # --- Clean ---
 .PHONY: clean
 clean:
-	rm -f reference/8086tiny
+	rm -f reference/8086tiny emu86
 	rm -f src/emulator/*.o
 	rm -rf dist/
-	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run test/unit/test_platform_linux

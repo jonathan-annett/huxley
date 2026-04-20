@@ -40,10 +40,12 @@ Thumbs.db
 *.swo
 *~
 
-# Compiled reference build
+# Compiled reference build and emulator binary
 packages/emu86/reference/8086tiny
+packages/emu86/emu86
 
-# Compiled test binaries
-packages/emu86/test/unit/test_snapshot
-packages/emu86/test/unit/test_ringbuf
-packages/emu86/test/unit/test_decode
+# Compiled test binaries (executables have no extension)
+packages/emu86/test/unit/test_*
+!packages/emu86/test/unit/test_*.c
+!packages/emu86/test/unit/test_*.h
+!packages/emu86/test/unit/test_*.sh
