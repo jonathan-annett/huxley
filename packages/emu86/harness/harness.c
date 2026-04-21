@@ -31,10 +31,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <time.h>
 
 /* Scratch directory for per-emulator disk copies (EMU-17). Each run overwrites
  * fresh copies; files are preserved after exit for offline diff inspection. */
 #define HARNESS_SCRATCH_DIR "/tmp/emu86-harness"
+#define HARNESS_HEARTBEAT_PATH HARNESS_SCRATCH_DIR "/heartbeat.log"
 
 /* ================================================================
  * Reference globals (declared in reference/8086tiny.c)
@@ -111,6 +113,13 @@ static uint64_t  harness_step_limit = 200000000ULL; /* default: very generous */
 static int       harness_inject_divergence = 0;     /* test hook */
 static uint64_t  harness_inject_at = 0;
 static int       harness_selftest_mode = 0;         /* compare ref↔ref */
+
+/* EMU-24: heartbeat log — fine-grained progress visibility for long runs
+ * and hang diagnosis. Written to /tmp/emu86-harness/heartbeat.log, truncated
+ * on startup, flushed after every line. */
+static FILE     *harness_heartbeat_fp;
+static uint64_t  harness_heartbeat_every = 1000;
+static uint64_t  harness_last_heartbeat_us;
 
 /* EMU-17: hux-side scratch paths, populated by main() before reference_main()
  * is called. harness_init opens these with O_RDWR on our side so that neither
@@ -582,6 +591,49 @@ report_divergence(uint32_t dflags, uint32_t mem_addr, uint32_t io_addr,
 }
 
 /* ================================================================
+ * EMU-24: heartbeat log helpers
+ * ================================================================ */
+
+static uint64_t
+harness_now_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+
+static void
+harness_close_heartbeat(void)
+{
+    if (harness_heartbeat_fp) {
+        fclose(harness_heartbeat_fp);
+        harness_heartbeat_fp = NULL;
+    }
+}
+
+static void
+harness_emit_heartbeat(void)
+{
+    uint64_t now_us = harness_now_us();
+    uint64_t dt_ms = (now_us - harness_last_heartbeat_us) / 1000ULL;
+
+    uint32_t lin = ((uint32_t)regs16[REF_REG_CS] << 4) + reg_ip;
+    fprintf(harness_heartbeat_fp,
+            "step=%06llu cs=%04X ip=%04X dt_ms=%llu opcodes=",
+            (unsigned long long)harness_step_count,
+            regs16[REF_REG_CS], reg_ip,
+            (unsigned long long)dt_ms);
+    for (int i = 0; i < 8; i++) {
+        uint8_t b = (lin + i < REF_RAM_SIZE) ? mem[lin + i] : 0;
+        fprintf(harness_heartbeat_fp, "%s%02X", i ? " " : "", b);
+    }
+    fputc('\n', harness_heartbeat_fp);
+    fflush(harness_heartbeat_fp);
+
+    harness_last_heartbeat_us = now_us;
+}
+
+/* ================================================================
  * The two hooks called from sim()
  * ================================================================ */
 
@@ -677,6 +729,12 @@ void harness_step_end(void)
                 (unsigned long long)harness_step_count,
                 regs16[REF_REG_CS], reg_ip);
         fflush(stderr);
+    }
+
+    if (harness_heartbeat_fp &&
+        harness_heartbeat_every > 0 &&
+        harness_step_count % harness_heartbeat_every == 0) {
+        harness_emit_heartbeat();
     }
 
 if (harness_step_count >= harness_step_limit) {
@@ -807,6 +865,28 @@ int main(int argc, char **argv)
                 HARNESS_SCRATCH_DIR, strerror(errno));
         return 1;
     }
+
+    /* EMU-24: heartbeat log. Parse cadence override, truncate-open the log,
+     * and register an atexit handler so buffered lines are flushed on every
+     * exit path (step-limit exit, divergence exit, error exit). */
+    const char *hb_env = getenv("HARNESS_HEARTBEAT_EVERY");
+    if (hb_env) {
+        char *end;
+        unsigned long long v = strtoull(hb_env, &end, 0);
+        if (*end == '\0')
+            harness_heartbeat_every = (uint64_t)v;
+    }
+    if (harness_heartbeat_every > 0) {
+        harness_heartbeat_fp = fopen(HARNESS_HEARTBEAT_PATH, "w");
+        if (!harness_heartbeat_fp) {
+            fprintf(stderr, "harness: cannot open heartbeat log '%s': %s "
+                            "(continuing without heartbeat)\n",
+                    HARNESS_HEARTBEAT_PATH, strerror(errno));
+        } else {
+            atexit(harness_close_heartbeat);
+        }
+    }
+    harness_last_heartbeat_us = harness_now_us();
 
     /* Floppy scratches */
     char floppy_ref[PATH_MAX], floppy_hux[PATH_MAX];

@@ -132,3 +132,19 @@ Status: PASS
 Test results: 333 passed, 0 failed (down from 335 — removed `lea_basic` and `lea_no_memory_access` unit tests in test_transfer.c; 2946 assertions total, -2 from baseline). Runtime-path LEA coverage retained via EMU-22's three `run_lea_*` tests in test_run.c.
 Harness result: unchanged (step 66392 FLAGS/ZF divergence at ADD SI, AX preserved — EMU-24 follow-up).
 Notes: Resolved `exec_lea` dead-code finding from EMU-21 triage. Chose delete (Option A) — the runtime LEA in `run.c` case 10 is ~12 lines and depends on decode-table lookup (`read_table_sreg(s, seg_reg_idx)` with `seg_reg_idx = t->data[tbase+3][d->rm]`) that `exec_lea` had no access to; wiring `exec_lea` in would have required threading the decode tables through the function or duplicating the table lookup, a net increase for a short body. Removed `exec_lea` (and its pre-refactor comment block reasoning about LEA offset reconstruction) from `opcodes/transfer.h`. Removed `lea_basic` and `lea_no_memory_access` from `test_transfer.c` (including their `RUN_TEST` entries) — these were the only sites that exercised `exec_lea`, both with `SREG_DS = 0` which had masked the function's latent hardcoded-DS default-segment bug. Updated a stale comment in `test_run.c` that referenced `exec_lea` as "dead code on the runtime path". No runtime change — `run.c` case 10 never called `exec_lea`. Standalone `./emu86 reference/bios test/images/freedos.img` unchanged — FreeDOS banner reached, divide-by-zero loop as before.
+
+## EMU-24
+Date: 2026-04-21
+Status: PASS
+Test results: 1560 passed, 0 failed — no new unit tests (harness infrastructure)
+Harness: still runs; heartbeats now visible in /tmp/emu86-harness/heartbeat.log
+Notes: Added heartbeat log to harness.c. Default 1000-step cadence,
+env-var override, truncate-on-startup, real-time flush. Sets up
+EMU-25 investigation of the apparent hang around step 66k. Phase 4
+integration tests: basic operation (file grows during run, last line
+flushed on divergence exit), truncate-on-startup (sentinel line gone
+after restart), HARNESS_HEARTBEAT_EVERY=100 override (~10x line rate),
+HARNESS_HEARTBEAT_EVERY=0 disable (no writes), step-limit exit path
+(final heartbeat preserved), divergence injection regression
+(HARNESS_INJECT_DIVERGENCE_AT=500 still detected). Standalone emu86
+build unchanged (harness-only change).
