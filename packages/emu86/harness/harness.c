@@ -25,9 +25,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
+#include <libgen.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+
+/* Scratch directory for per-emulator disk copies (EMU-17). Each run overwrites
+ * fresh copies; files are preserved after exit for offline diff inspection. */
+#define HARNESS_SCRATCH_DIR "/tmp/emu86-harness"
 
 /* ================================================================
  * Reference globals (declared in reference/8086tiny.c)
@@ -104,6 +111,12 @@ static uint64_t  harness_step_limit = 200000000ULL; /* default: very generous */
 static int       harness_inject_divergence = 0;     /* test hook */
 static uint64_t  harness_inject_at = 0;
 static int       harness_selftest_mode = 0;         /* compare ref↔ref */
+
+/* EMU-17: hux-side scratch paths, populated by main() before reference_main()
+ * is called. harness_init opens these with O_RDWR on our side so that neither
+ * emulator touches the source disk image. Empty string = not provided. */
+static char      hux_floppy_path[PATH_MAX];
+static char      hux_hd_path[PATH_MAX];
 
 /* ================================================================
  * Platform callbacks for our emulator
@@ -240,17 +253,48 @@ static void harness_init(void)
         exit(1);
     }
 
-    /* Share reference's disk fds — both sides seek+read so ordering is safe. */
-    for (int i = 0; i < MAX_DISKS; i++) {
-        our_disks[i].fd = disk[i];
-        if (disk[i] > 0) {
-            off_t sz = lseek(disk[i], 0, SEEK_END);
-            our_disks[i].size = (sz > 0) ? (uint32_t)sz : 0;
-        } else {
-            our_disks[i].size = 0;
+    /* EMU-17: open our own fds against the hux scratch copies. The reference
+     * has already opened its own .ref.scratch fds via its normal argv path;
+     * we open separate fds on the .hux.scratch files so neither side ever
+     * touches the source image and divergent writes land in separate files.
+     *
+     * BIOS (disk[2]) is read-only and is consumed by the reference at init
+     * time to load mem[0xF0100]; our side reads BIOS out of mem, not disk.
+     * So we share the reference's BIOS fd (it's never written by either side). */
+    our_disks[2].fd = disk[2];
+    off_t bios_sz = (disk[2] > 0) ? lseek(disk[2], 0, SEEK_END) : -1;
+    our_disks[2].size = (bios_sz > 0) ? (uint32_t)bios_sz : 0;
+
+    if (hux_floppy_path[0]) {
+        our_disks[1].fd = open(hux_floppy_path, O_RDWR);
+        if (our_disks[1].fd < 0) {
+            fprintf(stderr, "harness: cannot open hux floppy scratch '%s': %s\n",
+                    hux_floppy_path, strerror(errno));
+            exit(1);
         }
-        our_state->disk[i].size = our_disks[i].size;
+        off_t sz = lseek(our_disks[1].fd, 0, SEEK_END);
+        our_disks[1].size = (sz > 0) ? (uint32_t)sz : 0;
+    } else {
+        our_disks[1].fd = 0;
+        our_disks[1].size = 0;
     }
+
+    if (hux_hd_path[0]) {
+        our_disks[0].fd = open(hux_hd_path, O_RDWR);
+        if (our_disks[0].fd < 0) {
+            fprintf(stderr, "harness: cannot open hux HD scratch '%s': %s\n",
+                    hux_hd_path, strerror(errno));
+            exit(1);
+        }
+        off_t sz = lseek(our_disks[0].fd, 0, SEEK_END);
+        our_disks[0].size = (sz > 0) ? (uint32_t)sz : 0;
+    } else {
+        our_disks[0].fd = 0;
+        our_disks[0].size = 0;
+    }
+
+    for (int i = 0; i < MAX_DISKS; i++)
+        our_state->disk[i].size = our_disks[i].size;
 
     /* Platform setup */
     memset(&our_platform, 0, sizeof(our_platform));
@@ -630,4 +674,190 @@ void harness_step_end(void)
         fflush(stderr);
         exit(0);
     }
+}
+
+/* ================================================================
+ * EMU-17: scratch-file disk isolation
+ *
+ * main() below wraps reference_main() (the reference's real main is
+ * renamed via -Dmain=reference_main in HARNESS_REF_CFLAGS). Before the
+ * reference opens any disks, we:
+ *   1. copy the floppy (and HD, if provided) to two scratch files per
+ *      image — one for the reference, one for us;
+ *   2. rewrite argv so the reference opens its .ref.scratch files;
+ *   3. stash the .hux.scratch paths in globals for harness_init to open
+ *      on our side.
+ *
+ * The source image is never opened for writing by either emulator.
+ * Scratch files are preserved after exit so divergent runs can be diff'd.
+ * ================================================================ */
+
+/* Reference's real main(), renamed by -Dmain=reference_main. */
+int reference_main(int argc, char **argv);
+
+/* Robust chunked copy. Returns 0 on success, -1 on error (with errno set and
+ * an explanatory message already printed). */
+static int
+copy_file(const char *src, const char *dst)
+{
+    int sfd = open(src, O_RDONLY);
+    if (sfd < 0) {
+        fprintf(stderr, "harness: cannot open source '%s': %s\n",
+                src, strerror(errno));
+        return -1;
+    }
+    int dfd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dfd < 0) {
+        fprintf(stderr, "harness: cannot create scratch '%s': %s\n",
+                dst, strerror(errno));
+        close(sfd);
+        return -1;
+    }
+    uint8_t buf[64 * 1024];
+    ssize_t n;
+    while ((n = read(sfd, buf, sizeof(buf))) > 0) {
+        ssize_t off = 0;
+        while (off < n) {
+            ssize_t w = write(dfd, buf + off, (size_t)(n - off));
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                fprintf(stderr, "harness: write to '%s' failed: %s\n",
+                        dst, strerror(errno));
+                close(sfd); close(dfd);
+                return -1;
+            }
+            off += w;
+        }
+    }
+    if (n < 0) {
+        fprintf(stderr, "harness: read from '%s' failed: %s\n",
+                src, strerror(errno));
+        close(sfd); close(dfd);
+        return -1;
+    }
+    if (close(dfd) != 0) {
+        fprintf(stderr, "harness: close '%s' failed: %s\n",
+                dst, strerror(errno));
+        close(sfd);
+        return -1;
+    }
+    close(sfd);
+    return 0;
+}
+
+/* Build "<HARNESS_SCRATCH_DIR>/<basename(src)><suffix>" in `out`. Returns 0 on
+ * success, -1 if the result would overflow PATH_MAX. */
+static int
+build_scratch_path(char *out, size_t outsz, const char *src, const char *suffix)
+{
+    /* basename() may modify its argument on some platforms; work on a copy. */
+    char tmp[PATH_MAX];
+    size_t slen = strlen(src);
+    if (slen >= sizeof(tmp)) { errno = ENAMETOOLONG; return -1; }
+    memcpy(tmp, src, slen + 1);
+    const char *base = basename(tmp);
+    int n = snprintf(out, outsz, "%s/%s%s", HARNESS_SCRATCH_DIR, base, suffix);
+    if (n < 0 || (size_t)n >= outsz) { errno = ENAMETOOLONG; return -1; }
+    return 0;
+}
+
+static void
+usage(const char *prog)
+{
+    fprintf(stderr,
+        "Usage: %s <bios> <floppy> [@hd]\n"
+        "  Runs lockstep against the reference. Each emulator gets its own\n"
+        "  scratch copy of the disk images in %s/ — the source images are\n"
+        "  never written. Scratch files are preserved after exit.\n",
+        prog, HARNESS_SCRATCH_DIR);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 3 || argc > 4) {
+        usage(argv[0]);
+        return 1;
+    }
+
+    const char *bios_path   = argv[1];
+    const char *floppy_src  = argv[2];
+    const char *hd_arg      = (argc == 4) ? argv[3] : NULL;
+    int         hd_boot     = (hd_arg && hd_arg[0] == '@');
+    const char *hd_src      = hd_arg ? (hd_boot ? hd_arg + 1 : hd_arg) : NULL;
+
+    if (mkdir(HARNESS_SCRATCH_DIR, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "harness: cannot create scratch dir '%s': %s\n",
+                HARNESS_SCRATCH_DIR, strerror(errno));
+        return 1;
+    }
+
+    /* Floppy scratches */
+    char floppy_ref[PATH_MAX], floppy_hux[PATH_MAX];
+    if (build_scratch_path(floppy_ref, sizeof(floppy_ref),
+                           floppy_src, ".ref.scratch") != 0 ||
+        build_scratch_path(floppy_hux, sizeof(floppy_hux),
+                           floppy_src, ".hux.scratch") != 0) {
+        fprintf(stderr, "harness: floppy scratch path too long\n");
+        return 1;
+    }
+    if (copy_file(floppy_src, floppy_ref) != 0) return 1;
+    if (copy_file(floppy_src, floppy_hux) != 0) return 1;
+
+    size_t n = strlen(floppy_hux);
+    if (n >= sizeof(hux_floppy_path)) {
+        fprintf(stderr, "harness: hux floppy path too long\n");
+        return 1;
+    }
+    memcpy(hux_floppy_path, floppy_hux, n + 1);
+
+    /* Optional HD scratches. We preserve the @-boot prefix in the arg
+     * passed to the reference so it still sets DL=0x80 correctly. */
+    char hd_ref[PATH_MAX] = "", hd_hux[PATH_MAX] = "";
+    char hd_ref_arg[PATH_MAX + 1] = "";
+    if (hd_src) {
+        if (build_scratch_path(hd_ref, sizeof(hd_ref),
+                               hd_src, ".ref.scratch") != 0 ||
+            build_scratch_path(hd_hux, sizeof(hd_hux),
+                               hd_src, ".hux.scratch") != 0) {
+            fprintf(stderr, "harness: HD scratch path too long\n");
+            return 1;
+        }
+        if (copy_file(hd_src, hd_ref) != 0) return 1;
+        if (copy_file(hd_src, hd_hux) != 0) return 1;
+
+        size_t hn = strlen(hd_hux);
+        if (hn >= sizeof(hux_hd_path)) {
+            fprintf(stderr, "harness: hux HD path too long\n");
+            return 1;
+        }
+        memcpy(hux_hd_path, hd_hux, hn + 1);
+
+        int k = snprintf(hd_ref_arg, sizeof(hd_ref_arg), "%s%s",
+                         hd_boot ? "@" : "", hd_ref);
+        if (k < 0 || (size_t)k >= sizeof(hd_ref_arg)) {
+            fprintf(stderr, "harness: HD ref arg too long\n");
+            return 1;
+        }
+    }
+
+    fprintf(stderr, "harness: scratch files (preserved after exit):\n");
+    fprintf(stderr, "  ref floppy: %s\n", floppy_ref);
+    fprintf(stderr, "  hux floppy: %s\n", floppy_hux);
+    if (hd_src) {
+        fprintf(stderr, "  ref HD    : %s\n", hd_ref);
+        fprintf(stderr, "  hux HD    : %s\n", hd_hux);
+    }
+    fflush(stderr);
+
+    /* Build argv for reference_main: program, bios, floppy_ref, [hd_ref]. */
+    char *ref_argv[5];
+    int ref_argc = 0;
+    ref_argv[ref_argc++] = argv[0];
+    ref_argv[ref_argc++] = (char *)bios_path;
+    ref_argv[ref_argc++] = floppy_ref;
+    if (hd_src)
+        ref_argv[ref_argc++] = hd_ref_arg;
+    ref_argv[ref_argc] = NULL;
+
+    return reference_main(ref_argc, ref_argv);
 }

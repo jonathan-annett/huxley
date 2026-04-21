@@ -131,6 +131,7 @@ HARNESS_BIN     = harness/harness
 HARNESS_REF_CFLAGS = -O2 -Wall -DNO_GRAPHICS \
     -DHARNESS_STEP_BEGIN=harness_step_begin \
     -DHARNESS_STEP_END=harness_step_end \
+    -Dmain=reference_main \
     -Dread=harness_read \
     -Dtime=harness_time \
     -Dftime=harness_ftime \
