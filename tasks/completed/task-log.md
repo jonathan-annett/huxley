@@ -167,3 +167,17 @@ declaration rules truncated size_t arguments on x86_64 and the
 harness segfaulted on the first KEYBOARD_DRIVER call. The brief's
 verbatim script omitted this; adding the prototypes is a strict
 superset of the brief's intent and necessary for correctness.
+
+## EMU-26
+Date: 2026-04-21
+Status: PASS
+Test results: 1548 → 1560 (12 new MUL/IMUL flag tests; all pass)
+Harness: advances past step 66,392; next divergence at step 69,489
+         (AF mismatch at 1FE0:7D20 — EMU-27 territory).
+Notes: Aligned SF/ZF/PF-after-MUL/IMUL to reference semantics.
+Intel-undefined flags, similar shape to EMU-20's AF-on-shifts.
+Preserved the reference's quirk where ZF looks at the full product
+while SF/PF look at low halves. AF left untouched (the reference's
+SZP-update path does not include AF). Added a regression-guard test
+that pre-sets SF/ZF/PF to wrong values and verifies MUL overwrites
+them — the exact shape of the bug EMU-26 fixes.

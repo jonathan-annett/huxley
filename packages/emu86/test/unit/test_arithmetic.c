@@ -666,6 +666,248 @@ TEST(imul_word_basic)
 }
 
 /* ================================================================
+ * MUL/IMUL SF/ZF/PF tests (matching 8086tiny reference)
+ *
+ * Intel marks SF, ZF, PF as undefined after MUL/IMUL; the reference
+ * nonetheless derives them from op_result with a specific quirk:
+ * ZF tests the full product, SF/PF test the low half.
+ * ================================================================ */
+
+TEST(mul_word_szp_zero_times_zero)
+{
+    /* MUL word: 0 * 0 = 0 → ZF=1, SF=0, PF=1 (AL=0, even parity), CF=0, OF=0 */
+    setup();
+    state->regs[REG_AX] = 0;
+    state->regs[REG_CX] = 0;
+    DecodeContext d = unary_word(REG_CX);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0);
+    ASSERT_EQ(state->regs[REG_DX], 0);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    teardown();
+}
+
+TEST(mul_word_szp_one_times_one)
+{
+    /* MUL word: 1 * 1 = 1 → ZF=0, SF=0, PF=0 (AL=1, odd parity), CF=0, OF=0 */
+    setup();
+    state->regs[REG_AX] = 1;
+    state->regs[REG_CX] = 1;
+    DecodeContext d = unary_word(REG_CX);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 1);
+    ASSERT_EQ(state->regs[REG_DX], 0);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    teardown();
+}
+
+TEST(mul_word_szp_ffff_times_two)
+{
+    /* MUL word: 0xFFFF * 2 = 0x0001FFFE → AX=FFFE, DX=0001
+     * ZF=0, SF=1 (bit15 of FFFE), PF=0 (parity of 0xFE is odd), CF=OF=1 */
+    setup();
+    state->regs[REG_AX] = 0xFFFF;
+    state->regs[REG_CX] = 2;
+    DecodeContext d = unary_word(REG_CX);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0xFFFE);
+    ASSERT_EQ(state->regs[REG_DX], 0x0001);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(mul_word_szp_zero_low_half)
+{
+    /* MUL word: 0x8000 * 2 = 0x00010000 → AX=0000, DX=0001
+     * FULL product is nonzero so ZF=0 — this is the bug fixed by EMU-26.
+     * SF=0 (bit15 of AX=0), PF=1 (AL=0, even parity), CF=OF=1. */
+    setup();
+    state->regs[REG_AX] = 0x8000;
+    state->regs[REG_CX] = 2;
+    DecodeContext d = unary_word(REG_CX);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0x0000);
+    ASSERT_EQ(state->regs[REG_DX], 0x0001);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(mul_byte_szp_high_bit_set)
+{
+    /* MUL byte: 0xFF * 0x02 = 0x01FE → AX=01FE
+     * ZF=0, SF=1 (bit7 of AL=FE), PF=0 (parity of 0xFE odd), CF=OF=1 */
+    setup();
+    state->regs[REG_AX] = 0xFF;
+    state->regs[REG_CX] = 0x02;
+    DecodeContext d = unary_byte(1);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0x01FE);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(mul_byte_szp_zero_low_half)
+{
+    /* MUL byte: 0x10 * 0x10 = 0x0100 → AX=0100
+     * FULL 16-bit product is nonzero so ZF=0.
+     * SF=0 (bit7 of AL=0), PF=1 (AL=0, even), CF=OF=1. */
+    setup();
+    state->regs[REG_AX] = 0x10;
+    state->regs[REG_CX] = 0x10;
+    DecodeContext d = unary_byte(1);
+    exec_mul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0x0100);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(imul_word_szp_zero_times_neg)
+{
+    /* IMUL word: 0 * -1 = 0 → ZF=1, SF=0, PF=1 */
+    setup();
+    state->regs[REG_AX] = 0;
+    state->regs[REG_CX] = 0xFFFF; /* -1 */
+    DecodeContext d = unary_word(REG_CX);
+    exec_imul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0);
+    ASSERT_EQ(state->regs[REG_DX], 0);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    teardown();
+}
+
+TEST(imul_word_szp_neg_times_neg)
+{
+    /* IMUL word: -1 * -1 = 1 → ZF=0, SF=0, PF=0 (AL=1, odd) */
+    setup();
+    state->regs[REG_AX] = 0xFFFF; /* -1 */
+    state->regs[REG_CX] = 0xFFFF; /* -1 */
+    DecodeContext d = unary_word(REG_CX);
+    exec_imul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0x0001);
+    ASSERT_EQ(state->regs[REG_DX], 0x0000);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 0);
+    teardown();
+}
+
+TEST(imul_byte_szp_overflow)
+{
+    /* IMUL byte: -128 * 2 = -256 → AX=FF00
+     * Full 16-bit bit pattern 0xFF00 is nonzero → ZF=0.
+     * Low byte = 0x00 → SF=0 (bit7=0), PF=1 (even). */
+    setup();
+    state->regs[REG_AX] = 0x80; /* AL = -128 */
+    state->regs[REG_CX] = 2;
+    DecodeContext d = unary_byte(1);
+    exec_imul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 0xFF00);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    teardown();
+}
+
+/*
+ * Regression guard: pre-set SF/ZF/PF to the WRONG values for the
+ * result we expect, run MUL, and verify the flags are now correct.
+ * This catches "forgot to update SF/ZF/PF" regressions where the
+ * old flag state would survive a MUL that should have changed them.
+ */
+TEST(mul_szp_overwrites_prior_flags)
+{
+    setup();
+    /* Case A: result ZF should be 0 but ZF starts at 1.
+     * This is the exact divergence EMU-26 fixes. */
+    state->regs[REG_AX] = 0x8000;
+    state->regs[REG_CX] = 2;
+    set_flag(state, FLAG_ZF);   /* pre-set ZF=1 (wrong) */
+    clear_flag(state, FLAG_SF); /* pre-clear SF (happens to be right) */
+    clear_flag(state, FLAG_PF); /* pre-clear PF (wrong — should be 1) */
+    DecodeContext d = unary_word(REG_CX);
+    exec_mul(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0); /* overwritten from 1 */
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1); /* overwritten from 0 */
+
+    /* Case B: result ZF should be 1 but ZF starts at 0; SF starts at 1. */
+    state->regs[REG_AX] = 0;
+    state->regs[REG_CX] = 0;
+    clear_flag(state, FLAG_ZF); /* pre-clear ZF=0 (wrong) */
+    set_flag(state, FLAG_SF);   /* pre-set SF=1 (wrong) */
+    set_flag(state, FLAG_PF);   /* pre-set PF (happens to be right) */
+    exec_mul(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 1); /* overwritten from 0 */
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0); /* overwritten from 1 */
+    ASSERT_EQ(get_flag(state, FLAG_PF), 1);
+    teardown();
+}
+
+TEST(imul_szp_overwrites_prior_flags)
+{
+    setup();
+    /* -1 * -1 = 1: ZF should go 1→0, SF should go 1→0, PF should go 1→0 */
+    state->regs[REG_AX] = 0xFFFF;
+    state->regs[REG_CX] = 0xFFFF;
+    set_flag(state, FLAG_ZF);
+    set_flag(state, FLAG_SF);
+    set_flag(state, FLAG_PF);
+    DecodeContext d = unary_word(REG_CX);
+    exec_imul(state, &d);
+    ASSERT_EQ(state->regs[REG_AX], 1);
+    ASSERT_EQ(get_flag(state, FLAG_ZF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_SF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_PF), 0);
+    teardown();
+}
+
+/*
+ * AF must NOT be touched by MUL/IMUL — the reference's SZP-update
+ * path does not include AF, so AF retains its prior value.
+ */
+TEST(mul_does_not_touch_af)
+{
+    setup();
+    state->regs[REG_AX] = 0x10;
+    state->regs[REG_CX] = 0x10;
+    set_flag(state, FLAG_AF);
+    DecodeContext d = unary_byte(1);
+    exec_mul(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1); /* unchanged */
+
+    clear_flag(state, FLAG_AF);
+    exec_mul(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0); /* unchanged */
+    teardown();
+}
+
+/* ================================================================
  * DIV tests
  * ================================================================ */
 
@@ -955,6 +1197,20 @@ int main(void)
     RUN_TEST(imul_byte_negative);
     RUN_TEST(imul_byte_fits);
     RUN_TEST(imul_word_basic);
+
+    /* MUL/IMUL SF/ZF/PF (EMU-26) */
+    RUN_TEST(mul_word_szp_zero_times_zero);
+    RUN_TEST(mul_word_szp_one_times_one);
+    RUN_TEST(mul_word_szp_ffff_times_two);
+    RUN_TEST(mul_word_szp_zero_low_half);
+    RUN_TEST(mul_byte_szp_high_bit_set);
+    RUN_TEST(mul_byte_szp_zero_low_half);
+    RUN_TEST(imul_word_szp_zero_times_neg);
+    RUN_TEST(imul_word_szp_neg_times_neg);
+    RUN_TEST(imul_byte_szp_overflow);
+    RUN_TEST(mul_szp_overwrites_prior_flags);
+    RUN_TEST(imul_szp_overwrites_prior_flags);
+    RUN_TEST(mul_does_not_touch_af);
 
     /* DIV */
     RUN_TEST(div_byte_basic);

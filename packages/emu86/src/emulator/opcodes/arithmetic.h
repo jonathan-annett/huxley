@@ -178,6 +178,12 @@ exec_dec(Emu86State *s, DecodeContext *d)
  * MUL — unsigned multiply
  * Byte: AX = AL * r/m8.  CF=OF=1 if AH != 0
  * Word: DX:AX = AX * r/m16.  CF=OF=1 if DX != 0
+ *
+ * SF/ZF/PF after MUL are Intel-undefined, but 8086tiny derives them
+ * from op_result (the full product) with a deliberate inconsistency:
+ * ZF tests the FULL product, while SF/PF look at the low half only.
+ * Match that exactly — the differential harness relies on it.
+ * AF is left untouched (reference does not update AF on MUL).
  * ================================================================ */
 
 static inline void
@@ -192,12 +198,18 @@ exec_mul(Emu86State *s, DecodeContext *d)
         s->regs[REG_DX] = (uint16_t)(result >> 16);
         update_flag(s, FLAG_CF, s->regs[REG_DX] != 0);
         update_flag(s, FLAG_OF, s->regs[REG_DX] != 0);
+        update_flag(s, FLAG_ZF, result == 0);
+        update_flag(s, FLAG_SF, SIGN_OF((uint16_t)result, 1));
+        update_flag(s, FLAG_PF, parity8((uint8_t)result));
     } else {
         /* Byte: AX = AL * src */
         uint16_t result = (uint16_t)(uint8_t)s->regs[REG_AX] * (uint8_t)src;
         s->regs[REG_AX] = result;
         update_flag(s, FLAG_CF, (result >> 8) != 0);
         update_flag(s, FLAG_OF, (result >> 8) != 0);
+        update_flag(s, FLAG_ZF, result == 0);
+        update_flag(s, FLAG_SF, SIGN_OF((uint8_t)result, 0));
+        update_flag(s, FLAG_PF, parity8((uint8_t)result));
     }
 }
 
@@ -207,6 +219,11 @@ exec_mul(Emu86State *s, DecodeContext *d)
  *       CF=OF=1 if result doesn't fit in signed byte
  * Word: DX:AX = (int16_t)AX * (int16_t)r/m16.
  *       CF=OF=1 if result doesn't fit in signed word
+ *
+ * SF/ZF/PF follow the same rule as MUL (see exec_mul): ZF from the
+ * full product, SF/PF from the low half. The raw bit pattern of the
+ * signed result is used for all three; signedness is irrelevant once
+ * we're just testing bits.
  * ================================================================ */
 
 static inline void
@@ -217,20 +234,28 @@ exec_imul(Emu86State *s, DecodeContext *d)
     if (d->operand_width) {
         /* Word: DX:AX = (int16_t)AX * (int16_t)src */
         int32_t result = (int32_t)(int16_t)s->regs[REG_AX] * (int16_t)src;
-        s->regs[REG_AX] = (uint16_t)result;
-        s->regs[REG_DX] = (uint16_t)((uint32_t)result >> 16);
+        uint32_t bits = (uint32_t)result;
+        s->regs[REG_AX] = (uint16_t)bits;
+        s->regs[REG_DX] = (uint16_t)(bits >> 16);
         /* CF=OF=1 if sign-extending AX doesn't reproduce the full result */
         int fits = (result == (int32_t)(int16_t)s->regs[REG_AX]);
         update_flag(s, FLAG_CF, !fits);
         update_flag(s, FLAG_OF, !fits);
+        update_flag(s, FLAG_ZF, bits == 0);
+        update_flag(s, FLAG_SF, SIGN_OF((uint16_t)bits, 1));
+        update_flag(s, FLAG_PF, parity8((uint8_t)bits));
     } else {
         /* Byte: AX = (int8_t)AL * (int8_t)src */
         int16_t result = (int16_t)(int8_t)(uint8_t)s->regs[REG_AX] * (int8_t)(uint8_t)src;
-        s->regs[REG_AX] = (uint16_t)result;
+        uint16_t bits = (uint16_t)result;
+        s->regs[REG_AX] = bits;
         /* CF=OF=1 if sign-extending AL doesn't reproduce the full result */
         int fits = (result == (int16_t)(int8_t)(uint8_t)s->regs[REG_AX]);
         update_flag(s, FLAG_CF, !fits);
         update_flag(s, FLAG_OF, !fits);
+        update_flag(s, FLAG_ZF, bits == 0);
+        update_flag(s, FLAG_SF, SIGN_OF((uint8_t)bits, 0));
+        update_flag(s, FLAG_PF, parity8((uint8_t)bits));
     }
 }
 
