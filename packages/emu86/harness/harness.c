@@ -716,6 +716,25 @@ void harness_step_end(void)
     uint32_t mem_addr, io_addr, reg_idx;
     uint32_t dflags = compare_states(&mem_addr, &io_addr, &reg_idx);
 
+    /* EMU-25 debug: dump state at interesting step */
+    if (harness_step_count == 65771 || harness_step_count == 65770) {
+    fprintf(stderr, "\n=== DEBUG step %llu ===\n",
+            (unsigned long long)harness_step_count);
+    fprintf(stderr, "ref  CS:IP=%04X:%04X SP=%04X  mem[4A6]=%02X  int8_asap=%d IF=%d\n",
+            regs16[REF_REG_CS], reg_ip, regs16[REF_REG_SP],
+            mem[0x4A6], int8_asap, !!regs8[REF_FLAG_IF]);
+    fprintf(stderr, "ours CS:IP=%04X:%04X SP=%04X  mem[4A6]=%02X  int8_asap=%d IF=%d\n",
+            our_state->sregs[SREG_CS], our_state->ip, our_state->regs[REG_SP],
+            our_state->mem[0x4A6], our_state->int8_asap,
+            !!(our_state->flags & FLAG_IF));
+    /* Stack dump - 16 bytes at ref SP */
+    uint32_t sp_lin = ((uint32_t)regs16[REF_REG_SS] << 4) + regs16[REF_REG_SP];
+    fprintf(stderr, "ref  stack [SS:SP..]: ");
+    for (int i = 0; i < 16; i++) fprintf(stderr, "%02X ", mem[sp_lin + i]);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
+
     if (dflags) {
         report_divergence(dflags, mem_addr, io_addr, reg_idx);
         fprintf(stderr, "harness: halting at step %llu due to divergence.\n",
@@ -746,6 +765,23 @@ if (harness_step_count >= harness_step_limit) {
         fprintf(stderr, "harness: opcode bytes at CS:IP: ");
         for (int i = 0; i < 8; i++) fprintf(stderr, "%02X ", mem[lin + i]);
         fprintf(stderr, "\n");
+
+        /* Diagnostic — ref side interrupt/vector state */
+        fprintf(stderr, "harness: ref  int8_asap=%d IF=%d TF=%d seg_ovr_en=%d rep_ovr_en=%d\n",
+                int8_asap, !!regs8[REF_FLAG_IF], !!regs8[REF_FLAG_TF],
+                seg_override_en, rep_override_en);
+        fprintf(stderr, "harness: ours int8_asap=%d IF=%d TF=%d seg_ovr_en=%d rep_ovr_en=%d\n",
+                our_state->int8_asap,
+                !!(our_state->flags & FLAG_IF),
+                !!(our_state->flags & FLAG_TF),
+                our_state->seg_override_en, our_state->rep_override_en);
+        fprintf(stderr, "harness: vec 0x07 (int7)  mem[1C..1F]=%02X %02X %02X %02X (IP=%02X%02X CS=%02X%02X)\n",
+                mem[0x1C], mem[0x1D], mem[0x1E], mem[0x1F],
+                mem[0x1D], mem[0x1C], mem[0x1F], mem[0x1E]);
+        fprintf(stderr, "harness: vec 0x0A (inta)  mem[28..2B]=%02X %02X %02X %02X (IP=%02X%02X CS=%02X%02X)\n",
+                mem[0x28], mem[0x29], mem[0x2A], mem[0x2B],
+                mem[0x29], mem[0x28], mem[0x2B], mem[0x2A]);
+
         fflush(stderr);
         exit(0);
     }
