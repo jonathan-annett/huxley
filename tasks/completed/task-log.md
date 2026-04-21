@@ -104,3 +104,10 @@ Notes: Macro-based integration of `reference/8086tiny.c` via `HARNESS_STEP_BEGIN
 Date: 2026-04-21
 Status: PASS
 Notes: Added scratch-file disk isolation to the harness. Each emulator now operates on its own copy of the disk image; source remains untouched. Self-test confirms image md5 unchanged before/after run. Harness output includes paths to scratch files for offline diff inspection. Phase 5 reproduced EMU-16's divergence finding at step 4096, confirming no regression in CPU-state comparison path.
+
+## EMU-19
+Date: 2026-04-21
+Status: PASS
+Test results: 1565 passed, 0 failed — 5 new tests for timer cadence (first tick at 20000, no tick at 4096, exact-multiple counts, partial-window counts, interval regularity). Revert-and-re-test confirmed all five fail against unpatched code.
+Harness result: step-4096 divergence closed; harness now reaches step 65679 before hitting a new divergence — FLAGS AF bit differs at CS:IP=F000:10FA executing `88 EB` (MOV BL, CH). Becomes the next task.
+Notes: Fixed timer tick cadence in run.c:587 to match reference's `inst_counter % KEYBOARD_TIMER_UPDATE_DELAY` (=20000). Changed `(s->inst_count & 0x4FFF) == 0` to `(s->inst_count % 20000) == 0` — one-line fix as prescribed. Old bitmask fired at 0x1000, 0x2000, 0x3000, 0x4000, 0x8000, … (irregular); new modulo fires at 20000, 40000, 60000, … (exact cadence). Closed the step-4096 divergence identified by EMU-16 and diagnosed by EMU-18. Standalone `./emu86 reference/bios test/images/freedos.img` unchanged — still reaches FreeDOS kernel banner and divide-by-zero loop.

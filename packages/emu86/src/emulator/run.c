@@ -584,7 +584,7 @@ void emu86_run(Emu86State *s, Emu86Platform *p,
             s->trap_flag = 1;
 
         /* 10. Timer polling (~every 20000 instructions) */
-        if ((s->inst_count & 0x4FFF) == 0)
+        if ((s->inst_count % 20000) == 0)
             s->int8_asap = 1;
 
         /* Service pending timer interrupt */

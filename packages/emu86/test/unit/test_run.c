@@ -606,6 +606,126 @@ TEST(run_shift_imm_c1_shl_mem_direct)
     teardown();
 }
 
+/* === Timer tick cadence (EMU-19) ===
+ *
+ * The timer polling check at run.c:587 fires int8_asap once every 20000
+ * instructions, matching reference/8086tiny.c's KEYBOARD_TIMER_UPDATE_DELAY.
+ * A prior bug used `(inst_count & 0x4FFF) == 0`, which fires at 0x1000,
+ * 0x2000, 0x3000, 0x4000, 0x8000, ... — a bitmask pattern, not a regular
+ * cadence — and caused a harness divergence at step 4096 (EMU-16/18).
+ *
+ * These tests run a tight JMP $-2 loop (one instruction per step) with
+ * FLAG_IF=0 so the interrupt-service path doesn't clear int8_asap.
+ * int8_asap is cleared between sampled runs so each rising edge can be
+ * observed.
+ */
+
+/* Runs exactly `steps` instructions of JMP $-2 and counts how many times
+ * int8_asap transitioned from 0 to 1. Assumes FLAG_IF is already clear.
+ * Clears int8_asap after each detected rising edge so subsequent edges
+ * are observable. */
+static int run_and_count_timer_ticks(int steps)
+{
+    int ticks = 0;
+    for (int i = 0; i < steps; i++) {
+        state->int8_asap = 0;
+        emu86_run(state, &platform, &tables, 4, &yield);
+        if (state->int8_asap) ticks++;
+    }
+    return ticks;
+}
+
+static void timer_setup(void)
+{
+    setup();
+    uint8_t code[] = { 0xEB, 0xFE }; /* JMP $-2 (1 instruction, infinite loop) */
+    place(0x7C00, code, sizeof(code));
+    state->flags &= ~FLAG_IF;       /* don't service int8_asap */
+    state->int8_asap = 0;
+    state->inst_count = 0;
+}
+
+TEST(timer_first_tick_at_20000)
+{
+    /* First rising edge of int8_asap must occur at inst_count == 20000,
+     * not at 4096 (the buggy bitmask cadence fires here). */
+    timer_setup();
+
+    int ticks_through_19999 = run_and_count_timer_ticks(19999);
+    ASSERT_EQ(ticks_through_19999, 0);
+    ASSERT_EQ(state->inst_count, 19999u);
+    ASSERT_EQ(state->int8_asap, 0);
+
+    int ticks_on_20000th = run_and_count_timer_ticks(1);
+    ASSERT_EQ(ticks_on_20000th, 1);
+    ASSERT_EQ(state->inst_count, 20000u);
+    ASSERT_EQ(state->int8_asap, 1);
+
+    teardown();
+}
+
+TEST(timer_not_firing_at_4096)
+{
+    /* The buggy bitmask `inst_count & 0x4FFF == 0` fires at 4096. The
+     * correct `% 20000` cadence must not. This is the exact instruction
+     * count at which the harness previously diverged. */
+    timer_setup();
+
+    int ticks = run_and_count_timer_ticks(4096);
+    ASSERT_EQ(ticks, 0);
+    ASSERT_EQ(state->inst_count, 4096u);
+    ASSERT_EQ(state->int8_asap, 0);
+
+    teardown();
+}
+
+TEST(timer_cadence_count_exact_multiples)
+{
+    /* For N = 20000 * k the count of rising edges should equal exactly k. */
+    timer_setup();
+
+    int ticks = run_and_count_timer_ticks(20000 * 3);
+    ASSERT_EQ(ticks, 3);
+    ASSERT_EQ(state->inst_count, 60000u);
+
+    teardown();
+}
+
+TEST(timer_cadence_count_partial_window)
+{
+    /* For N = 20000 * k + r (0 < r < 20000) the count should still be
+     * exactly k — the next edge hasn't fired yet. */
+    timer_setup();
+
+    int ticks = run_and_count_timer_ticks(20000 * 2 + 1234);
+    ASSERT_EQ(ticks, 2);
+    ASSERT_EQ(state->inst_count, 41234u);
+
+    teardown();
+}
+
+TEST(timer_cadence_regular_intervals)
+{
+    /* Intervals between consecutive rising edges must all equal 20000. */
+    timer_setup();
+
+    uint32_t edges[3] = {0, 0, 0};
+    int edge_idx = 0;
+    for (int i = 0; i < 20000 * 3 + 5; i++) {
+        state->int8_asap = 0;
+        emu86_run(state, &platform, &tables, 4, &yield);
+        if (state->int8_asap && edge_idx < 3) {
+            edges[edge_idx++] = state->inst_count;
+        }
+    }
+    ASSERT_EQ(edge_idx, 3);
+    ASSERT_EQ(edges[0], 20000u);
+    ASSERT_EQ(edges[1] - edges[0], 20000u);
+    ASSERT_EQ(edges[2] - edges[1], 20000u);
+
+    teardown();
+}
+
 /* === Memory fill === */
 
 TEST(run_memory_fill)
@@ -660,6 +780,11 @@ int main(void)
     RUN_TEST(run_shift_imm_c1_shr_ax_reg);
     RUN_TEST(run_shift_imm_c0_rol_al_reg);
     RUN_TEST(run_shift_imm_c1_shl_mem_direct);
+    RUN_TEST(timer_first_tick_at_20000);
+    RUN_TEST(timer_not_firing_at_4096);
+    RUN_TEST(timer_cadence_count_exact_multiples);
+    RUN_TEST(timer_cadence_count_partial_window);
+    RUN_TEST(timer_cadence_regular_intervals);
     RUN_TEST(run_memory_fill);
 
     printf("\n%d passed, %d failed\n", test_passes, test_failures);
