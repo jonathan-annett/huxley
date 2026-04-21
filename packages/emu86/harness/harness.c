@@ -356,6 +356,99 @@ static void harness_init(void)
 }
 
 /* ================================================================
+ * EMU-28: Pre-step state snapshot with rotating buffers
+ *
+ * At each clean-step boundary we want to remember the state going
+ * into the *next* instruction, so that if the next step diverges
+ * the report can show the pre-step state alongside the post-step
+ * state the comparator already reports.
+ *
+ * Because "state after step N" equals "state before step N+1", we
+ * only populate one buffer per side per step and rotate which
+ * buffer plays the "pre" role: at end of clean step N, populate
+ * `next_*` with current live state, then swap `pre_*` ↔ `next_*`
+ * so the newly-populated buffer becomes "pre" for step N+1.
+ *
+ * If step N+1 diverges, `pre_*` still holds state-after-N (=
+ * state-before-N+1) as populated at the end of step N. The old
+ * pre-buffer is now the scratch that would have been overwritten
+ * in step N+1's tail — which never runs because we're halting.
+ *
+ * The buffers capture registers, segment registers, IP, flags,
+ * interrupt/prefix status bytes and the 8 opcode bytes at CS:IP.
+ * Not memory, not io_ports — those are large and live state is
+ * available for memory/io divergence reporting directly.
+ * ================================================================ */
+
+typedef struct {
+    uint16_t regs[8];        /* AX, CX, DX, BX, SP, BP, SI, DI (OUR indexing) */
+    uint16_t sregs[4];       /* ES, CS, SS, DS (OUR indexing) */
+    uint16_t ip;
+    uint16_t flags;
+    uint8_t  int8_asap;
+    uint8_t  seg_override_en;
+    uint8_t  rep_override_en;
+    uint8_t  trap_flag;
+    uint8_t  seg_override;   /* OUR sreg index (0-3), or 0xFF if none */
+    uint8_t  rep_mode;
+    uint8_t  opcode_bytes[8];
+    uint32_t inst_count;
+} StepSnapshot;
+
+static StepSnapshot snap_ref_a, snap_ref_b;
+static StepSnapshot snap_our_a, snap_our_b;
+static StepSnapshot *pre_ref  = &snap_ref_a;
+static StepSnapshot *next_ref = &snap_ref_b;
+static StepSnapshot *pre_our  = &snap_our_a;
+static StepSnapshot *next_our = &snap_our_b;
+
+static void populate_ref_snapshot(StepSnapshot *s)
+{
+    for (int i = 0; i < 8; i++)
+        s->regs[i] = regs16[i];
+    for (int i = 0; i < 4; i++)
+        s->sregs[i] = regs16[REF_REG_ES + i];
+    s->ip = reg_ip;
+    s->flags = pack_ref_flags();
+    s->int8_asap = int8_asap;
+    s->seg_override_en = seg_override_en;
+    s->rep_override_en = rep_override_en;
+    s->trap_flag = trap_flag;
+    s->seg_override = ref_to_ours_sreg(seg_override);
+    s->rep_mode = rep_mode;
+    s->inst_count = inst_counter;
+    uint32_t lin = ((uint32_t)regs16[REF_REG_CS] << 4) + reg_ip;
+    for (int i = 0; i < 8; i++)
+        s->opcode_bytes[i] = (lin + i < REF_RAM_SIZE) ? mem[lin + i] : 0;
+}
+
+static void populate_our_snapshot(StepSnapshot *s)
+{
+    for (int i = 0; i < 8; i++)
+        s->regs[i] = our_state->regs[i];
+    for (int i = 0; i < 4; i++)
+        s->sregs[i] = our_state->sregs[i];
+    s->ip = our_state->ip;
+    s->flags = our_state->flags;
+    s->int8_asap = our_state->int8_asap;
+    s->seg_override_en = our_state->seg_override_en;
+    s->rep_override_en = our_state->rep_override_en;
+    s->trap_flag = our_state->trap_flag;
+    s->seg_override = our_state->seg_override;
+    s->rep_mode = our_state->rep_mode;
+    s->inst_count = (uint32_t)our_state->inst_count;
+    uint32_t lin = ((uint32_t)our_state->sregs[SREG_CS] << 4) + our_state->ip;
+    for (int i = 0; i < 8; i++)
+        s->opcode_bytes[i] = (lin + i < EMU86_MEM_SIZE) ? our_state->mem[lin + i] : 0;
+}
+
+static void rotate_snapshots(void)
+{
+    StepSnapshot *tmp = pre_ref; pre_ref = next_ref; next_ref = tmp;
+    tmp = pre_our; pre_our = next_our; next_our = tmp;
+}
+
+/* ================================================================
  * State comparison
  *
  * Populates the per-call `diverge_*` fields; returns 0 if identical,
@@ -485,6 +578,40 @@ report_divergence(uint32_t dflags, uint32_t mem_addr, uint32_t io_addr,
 
     fprintf(stderr, "\n\n======== HARNESS DIVERGENCE ========\n");
     fprintf(stderr, "Step             : %llu\n",
+            (unsigned long long)harness_step_count);
+
+    /* Pre-step state (populated at end of previous clean step).
+     * Both sides agreed here — otherwise a prior step would have
+     * diverged — so we print it once. This is the state going
+     * into the instruction that just diverged. Printed first so
+     * it's visible without scrolling past memory diffs. */
+    unsigned long long prev_step =
+        (harness_step_count > 0) ? harness_step_count - 1 : 0;
+    fprintf(stderr, "\n-- Pre-step state (end of step %llu, "
+                    "input to step %llu) --\n",
+            prev_step, (unsigned long long)harness_step_count);
+    fprintf(stderr, "CS:IP            : %04X:%04X\n",
+            pre_ref->sregs[SREG_CS], pre_ref->ip);
+    fprintf(stderr, "Opcode bytes     : ");
+    for (int i = 0; i < 8; i++)
+        fprintf(stderr, "%02X ", pre_ref->opcode_bytes[i]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Registers        : "
+                    "AX=%04X CX=%04X DX=%04X BX=%04X "
+                    "SP=%04X BP=%04X SI=%04X DI=%04X\n",
+            pre_ref->regs[0], pre_ref->regs[1], pre_ref->regs[2],
+            pre_ref->regs[3], pre_ref->regs[4], pre_ref->regs[5],
+            pre_ref->regs[6], pre_ref->regs[7]);
+    fprintf(stderr, "Segment regs     : ES=%04X CS=%04X SS=%04X DS=%04X\n",
+            pre_ref->sregs[0], pre_ref->sregs[1],
+            pre_ref->sregs[2], pre_ref->sregs[3]);
+    fprintf(stderr, "FLAGS            : %04X\n", pre_ref->flags);
+    fprintf(stderr, "Status           : int8_asap=%u seg_ovr_en=%u "
+                    "rep_ovr_en=%u TF=%u\n",
+            pre_ref->int8_asap, pre_ref->seg_override_en,
+            pre_ref->rep_override_en, pre_ref->trap_flag);
+
+    fprintf(stderr, "\n-- Post-step divergence (after step %llu executed) --\n",
             (unsigned long long)harness_step_count);
     fprintf(stderr, "Ref CS:IP        : %04X:%04X\n",
             regs16[REF_REG_CS], reg_ip);
@@ -680,6 +807,9 @@ void harness_step_end(void)
             report_divergence(df, ma, ia, ri);
             exit(3);
         }
+        populate_ref_snapshot(next_ref);
+        populate_our_snapshot(next_our);
+        rotate_snapshots();
         harness_step_count++;
         if (harness_step_count >= harness_step_limit) {
             fprintf(stderr, "harness: SELFTEST PASS — %llu steps, "
@@ -742,6 +872,13 @@ void harness_step_end(void)
         fflush(stderr);
         exit(2);
     }
+
+    /* Clean step — populate the "next" snapshot buffers with current
+     * live state, then rotate so "next" becomes "pre" for the step
+     * we're about to execute. */
+    populate_ref_snapshot(next_ref);
+    populate_our_snapshot(next_our);
+    rotate_snapshots();
 
     if (harness_step_count % 100000 == 0) {
         fprintf(stderr, "harness: %llu steps, CS:IP=%04X:%04X\n",

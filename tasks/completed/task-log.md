@@ -194,3 +194,16 @@ Intel-undefined case, same shape as EMU-20 (shifts), EMU-26 (MUL).
 The pattern is clear: when Intel says "undefined", the reference's
 answer is typically "leave alone" — our job is to match that even
 though "clear it" is equally Intel-legal.
+
+## EMU-28
+Date: 2026-04-22
+Status: PASS
+Test results: unchanged (harness infrastructure only)
+Harness: divergence reports now include pre-step state via
+rotating-buffer snapshots. Divergence at step 70,424 still
+exists (EMU-29 territory); its pre-step CS:IP is now visible
+directly in the report (1FE0:7D1B, opcode D3 E8 = SHR AX,CL).
+Cross-checked against HARNESS_STEP_LIMIT=70423 — matches.
+Notes: User suggested buffer-rotation optimisation — small
+buffers per side, pointer swap at clean-step boundary, so pre
+state is free at divergence time.
