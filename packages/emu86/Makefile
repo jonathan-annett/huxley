@@ -117,10 +117,54 @@ test-platform:
 test-integration:
 	@echo "TODO: Not yet implemented."
 
+# --- Differential test harness (EMU-16) ---
+# Lockstep-runs our emulator against the reference (8086tiny), comparing
+# CPU+machine state after every instruction. See harness/harness.c and
+# tasks/completed/emu16-task.md.
+
+HARNESS_OBJ_DIR = harness/obj
+HARNESS_BIN     = harness/harness
+
+# Reference build flags: redirect non-deterministic calls to harness stubs,
+# and wire in the per-step hook. DO NOT apply these flags to harness/*.c —
+# those files must call the real read()/time()/etc.
+HARNESS_REF_CFLAGS = -O2 -Wall -DNO_GRAPHICS \
+    -DHARNESS_STEP_BEGIN=harness_step_begin \
+    -DHARNESS_STEP_END=harness_step_end \
+    -Dread=harness_read \
+    -Dtime=harness_time \
+    -Dftime=harness_ftime \
+    -Dlocaltime=harness_localtime
+
+$(HARNESS_OBJ_DIR):
+	mkdir -p $@
+
+$(HARNESS_OBJ_DIR)/reference.o: reference/8086tiny.c | $(HARNESS_OBJ_DIR)
+	$(CC) $(HARNESS_REF_CFLAGS) -c $< -o $@
+
+$(HARNESS_OBJ_DIR)/overrides.o: harness/overrides.c | $(HARNESS_OBJ_DIR)
+	$(CC) -O2 -Wall -c $< -o $@
+
+$(HARNESS_OBJ_DIR)/harness.o: harness/harness.c | $(HARNESS_OBJ_DIR)
+	$(CC) -O2 -Wall -Isrc/emulator -c $< -o $@
+
+$(HARNESS_OBJ_DIR)/run.o: src/emulator/run.c | $(HARNESS_OBJ_DIR)
+	$(CC) -O2 -Wall -Isrc/emulator -c $< -o $@
+
+.PHONY: harness
+harness: $(HARNESS_BIN)
+
+$(HARNESS_BIN): $(HARNESS_OBJ_DIR)/reference.o \
+                $(HARNESS_OBJ_DIR)/overrides.o \
+                $(HARNESS_OBJ_DIR)/harness.o \
+                $(HARNESS_OBJ_DIR)/run.o
+	$(CC) -o $@ $^
+
 # --- Clean ---
 .PHONY: clean
 clean:
 	rm -f reference/8086tiny emu86
 	rm -f src/emulator/*.o
 	rm -rf dist/
+	rm -rf $(HARNESS_OBJ_DIR) $(HARNESS_BIN)
 	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run test/unit/test_platform_linux

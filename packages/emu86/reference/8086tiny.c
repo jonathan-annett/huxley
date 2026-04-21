@@ -154,6 +154,14 @@
 #define SDL_KEYBOARD_DRIVER sdl_screen ? SDL_PollEvent(&sdl_event) && (sdl_event.type == SDL_KEYDOWN || sdl_event.type == SDL_KEYUP) && (scratch_uint = sdl_event.key.keysym.unicode, scratch2_uint = sdl_event.key.keysym.mod, CAST(short)mem[0x4A6] = 0x400 + 0x800*!!(scratch2_uint & KMOD_ALT) + 0x1000*!!(scratch2_uint & KMOD_SHIFT) + 0x2000*!!(scratch2_uint & KMOD_CTRL) + 0x4000*(sdl_event.type == SDL_KEYUP) + ((!scratch_uint || scratch_uint > 0x7F) ? sdl_event.key.keysym.sym : scratch_uint), pc_interrupt(7)) : (KEYBOARD_DRIVER)
 #endif
 
+// EMU-16 differential-harness hooks. Empty unless overridden via -D.
+#ifndef HARNESS_STEP_BEGIN
+#define HARNESS_STEP_BEGIN() ((void)0)
+#endif
+#ifndef HARNESS_STEP_END
+#define HARNESS_STEP_END() ((void)0)
+#endif
+
 // Global variable definitions
 unsigned char mem[RAM_SIZE], io_ports[IO_PORT_COUNT], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_mod_size, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag, int8_asap, scratch_uchar, io_hi_lo, *vid_mem_base, spkr_en, bios_table_lookup[20][256];
 unsigned short *regs16, reg_ip, seg_override, file_index, wave_counter;
@@ -297,6 +305,7 @@ int main(int argc, char **argv)
 	// Instruction execution loop. Terminates if CS:IP = 0:0
 	for (; opcode_stream = mem + 16 * regs16[REG_CS] + reg_ip, opcode_stream != mem;)
 	{
+		HARNESS_STEP_BEGIN();
 		// Set up variables to prepare for decoding an opcode
 		set_opcode(*opcode_stream);
 
@@ -751,6 +760,7 @@ int main(int argc, char **argv)
 		// then process the tick and check for new keystrokes
 		if (int8_asap && !seg_override_en && !rep_override_en && regs8[FLAG_IF] && !regs8[FLAG_TF])
 			pc_interrupt(0xA), int8_asap = 0, SDL_KEYBOARD_DRIVER;
+		HARNESS_STEP_END();
 	}
 
 #ifndef NO_GRAPHICS

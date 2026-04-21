@@ -49,3 +49,6 @@ packages/emu86/test/unit/test_*
 !packages/emu86/test/unit/test_*.c
 !packages/emu86/test/unit/test_*.h
 !packages/emu86/test/unit/test_*.sh
+# Differential test harness (EMU-16)
+packages/emu86/harness/harness
+packages/emu86/harness/obj/
