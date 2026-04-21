@@ -52,3 +52,6 @@ packages/emu86/test/unit/test_*
 # Differential test harness (EMU-16)
 packages/emu86/harness/harness
 packages/emu86/harness/obj/
+
+# Task deploy scripts — brief is captured in tasks/*.md, script itself is ephemeral
+emu*-task.sh
