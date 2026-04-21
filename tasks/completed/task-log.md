@@ -148,3 +148,22 @@ HARNESS_HEARTBEAT_EVERY=0 disable (no writes), step-limit exit path
 (final heartbeat preserved), divergence injection regression
 (HARNESS_INJECT_DIVERGENCE_AT=500 still detected). Standalone emu86
 build unchanged (harness-only change).
+
+## EMU-25
+Date: 2026-04-21
+Status: PASS
+Test results: unchanged — this is harness-infrastructure only
+Harness: now reaches step 66,392 reliably regardless of stdin state;
+         previously diverged at step 65,771 when stdin was connected
+         to a terminal with input buffered.
+Notes: Replaced failing -D preprocessor substitutions with JS
+source patching. harness/patch-reference.js applies read/time/
+ftime/localtime redirections. Makefile builds reference.o from
+the patched copy; pristine reference/8086tiny.c untouched.
+objdump confirms substitutions now effective in the binary.
+Deviation from brief: the script also injects prototype
+declarations for the harness_* wrappers. Without them, implicit-int
+declaration rules truncated size_t arguments on x86_64 and the
+harness segfaulted on the first KEYBOARD_DRIVER call. The brief's
+verbatim script omitted this; adding the prototypes is a strict
+superset of the brief's intent and necessary for correctness.

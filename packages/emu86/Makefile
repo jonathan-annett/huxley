@@ -125,22 +125,25 @@ test-integration:
 HARNESS_OBJ_DIR = harness/obj
 HARNESS_BIN     = harness/harness
 
-# Reference build flags: redirect non-deterministic calls to harness stubs,
-# and wire in the per-step hook. DO NOT apply these flags to harness/*.c —
-# those files must call the real read()/time()/etc.
+# Reference build flags: wire in the per-step hook and rename main().
+# Redirection of non-deterministic libc calls (read/time/ftime/localtime)
+# to harness stubs is NOT done via -D substitution — glibc fortify-source
+# aliases in <unistd.h> bypass preprocessor macros at link time. Instead,
+# harness/patch-reference.js rewrites the call sites in a patched copy
+# of the reference source (harness/obj/reference_patched.c). DO NOT apply
+# these flags to harness/*.c — those files must call the real libc.
 HARNESS_REF_CFLAGS = -O2 -Wall -DNO_GRAPHICS \
     -DHARNESS_STEP_BEGIN=harness_step_begin \
     -DHARNESS_STEP_END=harness_step_end \
-    -Dmain=reference_main \
-    -Dread=harness_read \
-    -Dtime=harness_time \
-    -Dftime=harness_ftime \
-    -Dlocaltime=harness_localtime
+    -Dmain=reference_main
 
 $(HARNESS_OBJ_DIR):
 	mkdir -p $@
 
-$(HARNESS_OBJ_DIR)/reference.o: reference/8086tiny.c | $(HARNESS_OBJ_DIR)
+$(HARNESS_OBJ_DIR)/reference_patched.c: reference/8086tiny.c harness/patch-reference.js | $(HARNESS_OBJ_DIR)
+	node harness/patch-reference.js $< > $@
+
+$(HARNESS_OBJ_DIR)/reference.o: $(HARNESS_OBJ_DIR)/reference_patched.c | $(HARNESS_OBJ_DIR)
 	$(CC) $(HARNESS_REF_CFLAGS) -c $< -o $@
 
 $(HARNESS_OBJ_DIR)/overrides.o: harness/overrides.c | $(HARNESS_OBJ_DIR)
