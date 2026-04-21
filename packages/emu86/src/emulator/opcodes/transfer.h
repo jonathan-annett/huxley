@@ -187,65 +187,6 @@ static inline void exec_xchg_ax_reg(Emu86State *s, uint8_t reg)
 }
 
 /* ================================================================
- * LEA — Load Effective Address (no memory access, no flags)
- * ================================================================ */
-
-static inline void exec_lea(Emu86State *s, DecodeContext *d)
-{
-    /* rm_addr was computed by the decoder as the EA. For LEA, we load
-     * the offset portion (not the full linear address including segment).
-     * The offset is: rm_addr - segment_base. But since the decoder
-     * already computed the linear address, we need to extract just the
-     * offset. Alternatively, we can recompute it.
-     *
-     * Actually, LEA computes the effective address (offset within segment).
-     * The decoder stores the full linear address in rm_addr. We need the
-     * 16-bit offset. For correct LEA behavior, we subtract the segment base.
-     */
-    uint16_t segment;
-    if (d->mod < 3) {
-        /* Reconstruct the offset by subtracting segment base from linear addr */
-        if (s->seg_override_en)
-            segment = s->sregs[s->seg_override];
-        else {
-            /* Need to know the default segment. For simplicity, compute
-             * offset = rm_addr - 16*segment. Since rm_addr = 16*seg + offset,
-             * offset = rm_addr & 0xFFFF only works when segment is page-aligned.
-             * The correct approach: store the offset separately in the decoder.
-             * For now, do: offset = (uint16_t)(rm_addr - 16*default_seg) */
-            /* The linear address is rm_addr = 16*seg + offset (mod 2^20).
-             * Since offset is 16-bit, we can recover it as:
-             * offset = rm_addr - 16*seg, but we need to know seg.
-             * This is a design limitation — for LEA, we need the raw offset.
-             *
-             * WORKAROUND: LEA only cares about the 16-bit offset, which is
-             * the low 16 bits of (base_reg + index_reg + displacement).
-             * Since segoff_to_linear does 16*seg + (uint16_t)offset, and
-             * the offset was already computed as uint16_t before adding seg,
-             * we can recover it by: (uint16_t)(rm_addr - 16*seg).
-             * But we don't easily know seg here.
-             *
-             * Simplest correct approach: rm_addr mod something won't work.
-             * We need to redo the EA calculation without the segment.
-             * OR store the raw offset in the decode context.
-             *
-             * For now, we'll use the fact that for most cases the segment
-             * contribution doesn't affect the low 16 bits if offset < 64K.
-             * Actually: offset = (uint16_t)rm_addr only works if seg=0.
-             *
-             * Real fix: recompute EA without segment. Let's do it properly. */
-            segment = s->sregs[SREG_DS]; /* placeholder, see below */
-        }
-        /* rm_addr = 16*segment + offset. offset = rm_addr - 16*segment.
-         * This can overflow 16 bits, but LEA result is 16-bit. */
-        write_reg16(s, d->reg, (uint16_t)(d->rm_addr - ((uint32_t)segment << 4)));
-        return;
-    }
-    /* mod==3 shouldn't happen with LEA, but handle gracefully */
-    write_reg16(s, d->reg, (uint16_t)d->rm_addr);
-}
-
-/* ================================================================
  * LDS / LES — Load far pointer (no flags)
  * ================================================================ */
 

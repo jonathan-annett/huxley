@@ -212,35 +212,6 @@ TEST(xchg_ax_ax_is_nop) {
     teardown();
 }
 
-/* === LEA === */
-
-TEST(lea_basic) {
-    setup();
-    /* Simulate LEA AX, [BX+SI+0x10] with BX=0x100, SI=0x200, DS=0x0000 */
-    state->regs[REG_BX] = 0x0100;
-    state->regs[REG_SI] = 0x0200;
-    state->sregs[SREG_DS] = 0x0000;
-    DecodeContext d; memset(&d, 0, sizeof(d));
-    d.mod = 1; d.rm = 0; d.reg = REG_AX; d.operand_width = 1;
-    /* rm_addr = DS:BX+SI+0x10 = 0x0310 (DS=0 so linear addr = offset) */
-    d.rm_addr = segoff_to_linear(0x0000, 0x0310);
-    exec_lea(state, &d);
-    ASSERT_EQ(state->regs[REG_AX], 0x0310);
-    teardown();
-}
-
-TEST(lea_no_memory_access) {
-    setup();
-    state->sregs[SREG_DS] = 0x0000;
-    mem_write16(state, 0x500, 0xFFFF); /* fill with garbage */
-    DecodeContext d; memset(&d, 0, sizeof(d));
-    d.mod = 0; d.rm = 6; d.reg = REG_AX; d.operand_width = 1;
-    d.rm_addr = segoff_to_linear(0x0000, 0x0500);
-    exec_lea(state, &d);
-    ASSERT_EQ(state->regs[REG_AX], 0x0500); /* address, not 0xFFFF */
-    teardown();
-}
-
 /* === LDS / LES === */
 
 TEST(lds_basic) {
@@ -363,7 +334,6 @@ int main(void) {
     RUN_TEST(pushf_popf_roundtrip); RUN_TEST(pushf_reserved_bits);
     RUN_TEST(xchg_reg_reg); RUN_TEST(xchg_reg_mem);
     RUN_TEST(xchg_no_flags); RUN_TEST(xchg_ax_ax_is_nop);
-    RUN_TEST(lea_basic); RUN_TEST(lea_no_memory_access);
     RUN_TEST(lds_basic); RUN_TEST(les_basic);
     RUN_TEST(cbw_positive); RUN_TEST(cbw_negative);
     RUN_TEST(cwd_positive); RUN_TEST(cwd_negative);

@@ -729,9 +729,8 @@ TEST(timer_cadence_regular_intervals)
 /* === LEA (runtime path — EMU-22) === */
 
 /* LEA sets seg_override_en=1 as a side effect (EMU-22 alignment with the
- * reference's LEA-via-segment-override trick). Regression guard for that
- * side effect running through the actual runtime dispatch, not via
- * exec_lea (which is dead code on the runtime path — EMU-23). */
+ * reference's LEA-via-segment-override trick). Regression guard through the
+ * runtime dispatch path in run.c case 10. */
 TEST(run_lea_sets_seg_override_en)
 {
     setup();
