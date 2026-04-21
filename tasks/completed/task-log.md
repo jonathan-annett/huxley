@@ -181,3 +181,16 @@ while SF/PF look at low halves. AF left untouched (the reference's
 SZP-update path does not include AF). Added a regression-guard test
 that pre-sets SF/ZF/PF to wrong values and verifies MUL overwrites
 them — the exact shape of the bug EMU-26 fixes.
+
+## EMU-27
+Date: 2026-04-21
+Status: PASS
+Test results: 1560 → 1569 (9 new AF-preservation tests for
+              AND/OR/XOR/TEST + regression guard; all pass)
+Harness: advances past step 69,489; next divergence at step 70,424
+         (OF mismatch at 1FE0:7D1D — EMU-28 territory).
+Notes: Removed explicit AF clear from set_flags_logic. Another
+Intel-undefined case, same shape as EMU-20 (shifts), EMU-26 (MUL).
+The pattern is clear: when Intel says "undefined", the reference's
+answer is typically "leave alone" — our job is to match that even
+though "clear it" is equally Intel-legal.

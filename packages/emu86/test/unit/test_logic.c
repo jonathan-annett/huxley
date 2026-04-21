@@ -2,6 +2,7 @@
 #include "../../src/emulator/state.h"
 #include "../../src/emulator/decode.h"
 #include "../../src/emulator/opcodes/helpers.h"
+#include "../../src/emulator/opcodes/arithmetic.h"
 #include "../../src/emulator/opcodes/logic.h"
 #include <stdlib.h>
 #include <string.h>
@@ -264,6 +265,127 @@ TEST(test_parity) {
     teardown();
 }
 
+/* === AF preservation (EMU-27) ===
+ * AF is Intel-undefined for AND/OR/XOR/TEST. 8086tiny leaves it
+ * untouched; we match that. These tests pin the behaviour.
+ */
+
+TEST(and_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_and(state, &d);
+    ASSERT_EQ(read_reg8(state, 0), 0x0F);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(and_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_and(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+TEST(or_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xF0; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_or(state, &d);
+    ASSERT_EQ(read_reg8(state, 0), 0xFF);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(or_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xF0; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_or(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+TEST(xor_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_xor(state, &d);
+    ASSERT_EQ(read_reg8(state, 0), 0xF0);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(xor_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_xor(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+TEST(test_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_test(state, &d);
+    ASSERT_EQ(read_reg8(state, 0), 0xFF); /* unchanged */
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(test_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0xFF; state->regs[REG_BX] = 0x0F;
+    DecodeContext d = byte_op(0, 3);
+    exec_test(state, &d);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+/* Regression guard: exact shape of the bug the harness caught at
+ * step 69489 — an arithmetic op that sets AF, followed by a logical
+ * op (AND). AF must survive the AND.
+ */
+TEST(af_survives_add_then_and) {
+    setup();
+    /* ADD AL, BL where AL=0x0F, BL=0x01 -> AL=0x10, AF=1 (carry out of bit 3) */
+    state->regs[REG_AX] = 0x0F; state->regs[REG_BX] = 0x01;
+    DecodeContext da = byte_op(0, 3);
+    exec_add(state, &da);
+    ASSERT_EQ(read_reg8(state, 0), 0x10);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+
+    /* AND AL, 0xFF — result 0x10; AF must remain 1 (Intel-undefined, we preserve). */
+    state->regs[REG_BX] = 0xFF;
+    DecodeContext dn = byte_op(0, 3);
+    exec_and(state, &dn);
+    ASSERT_EQ(read_reg8(state, 0), 0x10);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
 int main(void) {
     printf("test_logic:\n");
     RUN_TEST(and_byte_basic); RUN_TEST(and_byte_zero);
@@ -277,6 +399,11 @@ int main(void) {
     RUN_TEST(test_byte_match); RUN_TEST(test_byte_no_match);
     RUN_TEST(test_preserves_operands); RUN_TEST(test_clears_cf_of);
     RUN_TEST(test_word_basic); RUN_TEST(test_parity);
+    RUN_TEST(and_preserves_af_set); RUN_TEST(and_preserves_af_clear);
+    RUN_TEST(or_preserves_af_set); RUN_TEST(or_preserves_af_clear);
+    RUN_TEST(xor_preserves_af_set); RUN_TEST(xor_preserves_af_clear);
+    RUN_TEST(test_preserves_af_set); RUN_TEST(test_preserves_af_clear);
+    RUN_TEST(af_survives_add_then_and);
     printf("\n%d passed, %d failed\n", test_passes, test_failures);
     return test_failures ? 1 : 0;
 }

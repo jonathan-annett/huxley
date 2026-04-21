@@ -29,7 +29,7 @@ write_dest(Emu86State *s, const DecodeContext *d, uint16_t val)
 
 /* ================================================================
  * AND — dest = dest & src
- * Flags: CF=0, OF=0, SF/ZF/PF from result, AF=0
+ * Flags: CF=0, OF=0, SF/ZF/PF from result, AF unchanged (Intel-undefined)
  * ================================================================ */
 
 static inline void
@@ -42,6 +42,7 @@ exec_and(Emu86State *s, DecodeContext *d)
 
 /* ================================================================
  * OR — dest = dest | src
+ * Flags: CF=0, OF=0, SF/ZF/PF from result, AF unchanged (Intel-undefined)
  * ================================================================ */
 
 static inline void
@@ -54,6 +55,7 @@ exec_or(Emu86State *s, DecodeContext *d)
 
 /* ================================================================
  * XOR — dest = dest ^ src
+ * Flags: CF=0, OF=0, SF/ZF/PF from result, AF unchanged (Intel-undefined)
  * ================================================================ */
 
 static inline void
@@ -78,7 +80,7 @@ exec_not(Emu86State *s, DecodeContext *d)
 
 /* ================================================================
  * TEST — temp = dest & src, set flags, discard result
- * Flags: same as AND (CF=0, OF=0, SF/ZF/PF from result)
+ * Flags: same as AND (CF=0, OF=0, SF/ZF/PF from result, AF unchanged)
  * ================================================================ */
 
 static inline void

@@ -138,8 +138,9 @@ set_flags_sub(Emu86State *s, uint32_t dest, uint32_t src,
 
 /*
  * Set flags for logic operations (AND, OR, XOR, TEST).
- * CF and OF are always cleared. SF, ZF, PF set normally.
- * AF is undefined per Intel docs but we clear it for consistency.
+ * CF and OF are cleared. SF, ZF, PF set from result.
+ * AF is Intel-undefined for logic ops; we leave it untouched to
+ * match 8086tiny reference semantics (see EMU-27).
  */
 static inline void __attribute__((always_inline))
 set_flags_logic(Emu86State *s, uint32_t result, uint8_t width)
@@ -147,8 +148,6 @@ set_flags_logic(Emu86State *s, uint32_t result, uint8_t width)
     set_flags_szp(s, result, width);
     clear_flag(s, FLAG_CF);
     clear_flag(s, FLAG_OF);
-    /* AF is undefined for logic ops; clear it */
-    clear_flag(s, FLAG_AF);
 }
 
 /*
