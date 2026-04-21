@@ -127,6 +127,70 @@ against regression in that area as well.
 
 ---
 
+## LEA and the transient seg_override idiom (Intel-behaviourally-equivalent)
+
+**Location:** `reference/8086tiny.c` LEA handling (case 10, `!i_d`
+branch), our `packages/emu86/src/emulator/run.c` case 10, and our
+`packages/emu86/harness/harness.c` comparator.
+
+**Behaviour:** The reference implements LEA's offset computation by
+reusing the segment-override machinery. It sets:
+- `seg_override_en = 1` (a counter that decrements at the top of the
+  next main-loop iteration, before any instruction consumes it)
+- `seg_override = REG_ZERO` (value 12, a pseudo-register at
+  `regs16[REG_ZERO]` that is initialised to 0 and never written to)
+
+After these are set, `SEGREG(REG_ZERO, ...)` evaluates to
+`0*16 + offset = offset`, which is what LEA needs in rm_addr.
+
+At the step boundary after LEA executes, the reference has both fields
+set. The next main-loop iteration decrements seg_override_en to 0,
+and seg_override is never consulted. CPU-observable behaviour is
+identical to a conventional LEA implementation.
+
+**Our implementation** (`run.c` case 10) reconstructs the offset
+directly from `rm_addr - segment*16`, without using the segment-
+override machinery. To align the internal state visible at step
+boundaries, we set `seg_override_en = 1` at the end of LEA as a
+side effect (matching the reference's flag setting). We do *not*
+set `seg_override` to any sentinel value, because our state
+vocabulary has no REG_ZERO equivalent — our `seg_override` is an
+SREG enum in [0, 3].
+
+**Harness compensation:** The comparator in `harness/harness.c`
+treats `ref seg_override == REG_ZERO (12)` as an equivalence-class
+match: when the reference uses this sentinel, the comparator skips
+the seg_override value comparison. This is a principled exception
+because REG_ZERO is an implementation-specific marker with no
+guest-observable meaning.
+
+**Category:** Intel-behaviourally-equivalent divergence (like the
+AF-on-shift alignment). Both implementations produce identical CPU
+behaviour but differ in internal state visible at step boundaries.
+In this case, unlike AF-on-shift, the alignment required a two-part
+fix: emulator side (set the flag) and harness side (don't compare
+the sentinel value).
+
+**Why not add a zero-segment register to our state?** That was the
+alternative approach (extend `Emu86State.sregs` to 5 entries, add
+`SREG_ZERO = 4`, etc.). Rejected because it adds permanent state
+for a single-instruction idiom. The harness-side equivalence class
+achieves the same lockstep property without carrying that weight.
+Future LEA-adjacent alignments that need the same equivalence
+benefit from this foundation; future alignments that don't can
+ignore it.
+
+**Identified during:** EMU-21 (partial, emulator side) and EMU-22
+(completed, harness side). EMU-21 triage report at
+`tasks/triage/emu21-triage-report.md` has the full investigation.
+
+**Related:** `exec_lea` in `opcodes/transfer.h` is dead code on the
+runtime path — the runtime LEA is inlined in `run.c` case 10. This
+was discovered during EMU-21. Resolving the DRY violation is
+deferred to EMU-23.
+
+---
+
 ## Template for future entries
 
 Each entry should include:

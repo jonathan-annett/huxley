@@ -726,6 +726,54 @@ TEST(timer_cadence_regular_intervals)
     teardown();
 }
 
+/* === LEA (runtime path — EMU-22) === */
+
+/* LEA sets seg_override_en=1 as a side effect (EMU-22 alignment with the
+ * reference's LEA-via-segment-override trick). Regression guard for that
+ * side effect running through the actual runtime dispatch, not via
+ * exec_lea (which is dead code on the runtime path — EMU-23). */
+TEST(run_lea_sets_seg_override_en)
+{
+    setup();
+    /* LEA BX, [DI+0x10] → 8D 5D 10. Followed by HLT. */
+    uint8_t code[] = { 0x8D, 0x5D, 0x10, 0xF4 };
+    place(0x7C00, code, sizeof(code));
+    state->regs[REG_DI] = 0x0040;
+    state->seg_override_en = 0;
+    emu86_step_single(state, &platform, &tables);
+    ASSERT_EQ(state->seg_override_en, 1);
+    teardown();
+}
+
+/* Regression guard: the seg_override_en side effect must not change LEA's
+ * destination-register result. */
+TEST(run_lea_result_unchanged)
+{
+    setup();
+    uint8_t code[] = { 0x8D, 0x5D, 0x10, 0xF4 }; /* LEA BX, [DI+0x10] */
+    place(0x7C00, code, sizeof(code));
+    state->regs[REG_DI] = 0x0040;
+    state->regs[REG_BX] = 0xDEAD;
+    emu86_step_single(state, &platform, &tables);
+    ASSERT_EQ(state->regs[REG_BX], 0x0050); /* DI + 0x10 */
+    teardown();
+}
+
+/* Regression guard: LEA doesn't modify flags. */
+TEST(run_lea_flags_unchanged)
+{
+    setup();
+    uint8_t code[] = { 0x8D, 0x5D, 0x10, 0xF4 }; /* LEA BX, [DI+0x10] */
+    place(0x7C00, code, sizeof(code));
+    state->regs[REG_DI] = 0x0040;
+    /* Set a distinctive pattern across all arith flags. */
+    state->flags = FLAG_CF | FLAG_PF | FLAG_AF | FLAG_ZF | FLAG_SF | FLAG_OF;
+    uint16_t before = state->flags;
+    emu86_step_single(state, &platform, &tables);
+    ASSERT_EQ(state->flags, before);
+    teardown();
+}
+
 /* === Memory fill === */
 
 TEST(run_memory_fill)
@@ -785,6 +833,9 @@ int main(void)
     RUN_TEST(timer_cadence_count_exact_multiples);
     RUN_TEST(timer_cadence_count_partial_window);
     RUN_TEST(timer_cadence_regular_intervals);
+    RUN_TEST(run_lea_sets_seg_override_en);
+    RUN_TEST(run_lea_result_unchanged);
+    RUN_TEST(run_lea_flags_unchanged);
     RUN_TEST(run_memory_fill);
 
     printf("\n%d passed, %d failed\n", test_passes, test_failures);

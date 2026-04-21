@@ -397,9 +397,22 @@ compare_states(uint32_t *mem_diff_addr, uint32_t *io_diff_addr,
     if (rf != of)
         flags |= DIV_FLAGS;
 
+    /* REG_ZERO (12) is the reference's sentinel for LEA's offset-
+     * computation trick. It has no guest-observable meaning — the
+     * corresponding seg_override_en is transient and decrements to 0
+     * before any instruction consumes it. Our emulator has no
+     * equivalent sentinel (and doesn't need one, since we compute LEA
+     * offsets directly). Treat REG_ZERO as "don't compare" for the
+     * seg_override field. See docs/notes/8086tiny-quirks.md. */
+    #define REG_ZERO 12
     uint8_t ref_so = ref_to_ours_sreg(seg_override);
+    int seg_override_differs =
+        seg_override_en
+        && seg_override != REG_ZERO
+        && our_state->seg_override != ref_so;
+
     if (our_state->seg_override_en != seg_override_en ||
-        (seg_override_en && our_state->seg_override != ref_so) ||
+        seg_override_differs ||
         our_state->rep_override_en != rep_override_en ||
         (rep_override_en && our_state->rep_mode != rep_mode))
         flags |= DIV_PREFIX;
@@ -666,11 +679,15 @@ void harness_step_end(void)
         fflush(stderr);
     }
 
-    if (harness_step_count >= harness_step_limit) {
+if (harness_step_count >= harness_step_limit) {
         fprintf(stderr, "harness: reached step limit %llu with no divergence. "
                         "Final CS:IP=%04X:%04X\n",
                 (unsigned long long)harness_step_count,
                 regs16[REF_REG_CS], reg_ip);
+        uint32_t lin = ((uint32_t)regs16[REF_REG_CS] << 4) + reg_ip;
+        fprintf(stderr, "harness: opcode bytes at CS:IP: ");
+        for (int i = 0; i < 8; i++) fprintf(stderr, "%02X ", mem[lin + i]);
+        fprintf(stderr, "\n");
         fflush(stderr);
         exit(0);
     }

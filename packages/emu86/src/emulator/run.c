@@ -230,6 +230,13 @@ execute_instruction(Emu86State *s, Emu86Platform *p,
                 write_reg16(s, d->reg,
                     (uint16_t)(d->rm_addr - ((uint32_t)seg << 4)));
             }
+            /* LEA idiom: reference sets seg_override_en=1 as a side effect of
+             * its "compute offset via segment-override machinery" trick. We
+             * don't use that trick (we reconstruct the offset directly), but we
+             * set the flag anyway to keep internal state aligned for harness
+             * lockstep. Decremented to 0 before next instruction executes, so
+             * no CPU-visible effect. See docs/notes/8086tiny-quirks.md. */
+            s->seg_override_en = 1;
         } else {
             /* POP r/m (8F) */
             exec_pop_rm(s, d);
