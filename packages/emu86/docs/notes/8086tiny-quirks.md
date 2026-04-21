@@ -91,6 +91,42 @@ for that specific case).
 
 ---
 
+## AF flag after shift instructions (Intel-undefined)
+
+**Location:** `reference/8086tiny.c` shift dispatch (case 12) and our
+`packages/emu86/src/emulator/opcodes/shift.h`.
+
+**Behaviour:** Intel's 8086 specification explicitly says "The AF flag
+is undefined" after SHL, SHR, and SAR. Different implementations may
+produce different AF values without being wrong per the spec. The
+reference emulator preserves AF across shift instructions (never
+calls set_AF, leaves the existing value untouched). Specifically:
+`std_flags[0xD2] = 0`, so the post-dispatch flag block does not run
+for opcode 0xD2; inside the shift dispatch `set_opcode(0x10)` re-maps
+to opcode 0x10 whose `std_flags` entry is SZP only (no AO_ARITH), so
+`set_AF_OF_arith()` is never called. Our emulator previously cleared
+AF to 0 at the end of these operations.
+
+**Design rationale:** Both are defensible per Intel. We align with the
+reference to keep the differential harness clean. Per our
+methodology (see `methodology.md`), matching the oracle is the
+correctness criterion.
+
+**What we do:** EMU-20 removed the `clear_flag(s, FLAG_AF)` calls
+from `exec_shl`, `exec_shr`, and `exec_sar`. AF now carries its
+previous value across shifts, matching the reference.
+
+**Identified during:** EMU-20 investigation (following a harness
+divergence at step 65,679 during FreeDOS boot — a `SHR BH, CL` at
+`F000:10F8` that produced `AF: ref=1 ours=0`).
+
+**Historical note:** Similar behaviour for rotate instructions
+(ROL, ROR, RCL, RCR) was already correct — none of these touched AF
+in either emulator. Our regression tests now explicitly guard
+against regression in that area as well.
+
+---
+
 ## Template for future entries
 
 Each entry should include:

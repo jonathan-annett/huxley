@@ -240,6 +240,117 @@ TEST(sar_preserves_sign) {
     teardown();
 }
 
+/* === AF preservation across shifts (EMU-20) ===
+ * Intel leaves AF undefined after SHL/SHR/SAR. Reference 8086tiny preserves
+ * AF across these ops; we align with that. Test both AF=1 and AF=0 starting
+ * states to rule out accidental coincidence. */
+
+TEST(shl_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x01;
+    DecodeContext d = unary_byte(0);
+    exec_shl(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(shl_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x01;
+    DecodeContext d = unary_byte(0);
+    exec_shl(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+TEST(shr_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_shr(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(shr_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_shr(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+TEST(sar_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_sar(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(sar_preserves_af_clear) {
+    setup();
+    clear_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_sar(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 0);
+    teardown();
+}
+
+/* === AF preservation across rotates (regression guards) ===
+ * Rotates already don't touch AF; these tests lock that in so a future
+ * refactor doesn't accidentally add a clear_flag(FLAG_AF) to any rotate. */
+
+TEST(rol_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_rol(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(ror_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    state->regs[REG_AX] = 0x01;
+    DecodeContext d = unary_byte(0);
+    exec_ror(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(rcl_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    clear_flag(state, FLAG_CF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_rcl(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
+TEST(rcr_preserves_af_set) {
+    setup();
+    set_flag(state, FLAG_AF);
+    clear_flag(state, FLAG_CF);
+    state->regs[REG_AX] = 0x01;
+    DecodeContext d = unary_byte(0);
+    exec_rcr(state, &d, 1);
+    ASSERT_EQ(get_flag(state, FLAG_AF), 1);
+    teardown();
+}
+
 /* === ROL === */
 
 TEST(rol_byte_by_1) {
@@ -442,6 +553,13 @@ int main(void) {
     /* RCR */
     RUN_TEST(rcr_byte_by_1_cf_clear); RUN_TEST(rcr_byte_by_1_cf_set);
     RUN_TEST(rcr_word_by_1);
+    /* AF preservation across shifts (EMU-20) */
+    RUN_TEST(shl_preserves_af_set); RUN_TEST(shl_preserves_af_clear);
+    RUN_TEST(shr_preserves_af_set); RUN_TEST(shr_preserves_af_clear);
+    RUN_TEST(sar_preserves_af_set); RUN_TEST(sar_preserves_af_clear);
+    /* AF preservation across rotates (regression guards) */
+    RUN_TEST(rol_preserves_af_set); RUN_TEST(ror_preserves_af_set);
+    RUN_TEST(rcl_preserves_af_set); RUN_TEST(rcr_preserves_af_set);
     printf("\n%d passed, %d failed\n", test_passes, test_failures);
     return test_failures ? 1 : 0;
 }

@@ -31,7 +31,6 @@ exec_shl(Emu86State *s, DecodeContext *d, uint8_t count)
         update_flag(s, FLAG_OF, get_flag(s, FLAG_CF) ^ SIGN_OF(result, w));
 
     set_flags_szp(s, result, w);
-    clear_flag(s, FLAG_AF);
     write_rm(s, d, result);
 }
 
@@ -59,7 +58,6 @@ exec_shr(Emu86State *s, DecodeContext *d, uint8_t count)
     uint32_t result = (val >> count) & MASK(w);
 
     set_flags_szp(s, result, w);
-    clear_flag(s, FLAG_AF);
     write_rm(s, d, result);
 }
 
@@ -101,7 +99,6 @@ exec_sar(Emu86State *s, DecodeContext *d, uint8_t count)
         update_flag(s, FLAG_OF, 0);
 
     set_flags_szp(s, result, w);
-    clear_flag(s, FLAG_AF);
     write_rm(s, d, result);
 }
 
