@@ -520,6 +520,92 @@ TEST(run_alu_imm_81_mem_disp16)
     teardown();
 }
 
+/* === Shift/rotate r/m, imm (0xC0/0xC1) — regression tests for EMU-15 ===
+ *
+ * For opcodes 0xC0/0xC1 (80186 shift-by-immediate), the BIOS tables give
+ * base_size=3 (already counting opcode + modrm + imm8). The decoder's
+ * linear length formula yields `3 + modrm_disp + 0 * (w+1) = 3 + modrm_disp`,
+ * which is the correct instruction length. Pre-fix case 12 then did
+ * `d->inst_length++` in the `extra` branch, over-advancing IP by one byte
+ * on every 0xC0/0xC1 execution. The FreeDOS BIOS hit this at F000:0D4D
+ * running `C1 E0 09` (SHL AX, 9) and skipped the following `0F` byte,
+ * breaking the extended_read_disk hook (EMU-14 triage).
+ *
+ * These tests drive each of 0xC0/0xC1 through emu86_run() and assert that
+ * HLT is reached at the expected IP — i.e. inst_length advanced by exactly
+ * the right amount. Pre-fix they hit BUDGET or EXIT (skipping HLT into
+ * zeroed memory); post-fix they HALT cleanly.
+ */
+
+TEST(run_shift_imm_c1_shl_ax_reg)
+{
+    /* C1 E0 09 F4 — SHL AX, 9; HLT. The exact BIOS-triggering instruction. */
+    setup();
+    state->regs[REG_AX] = 0x0001;
+    uint8_t code[] = { 0xC1, 0xE0, 0x09, 0xF4 };
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 0x0200);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_shift_imm_c1_shr_ax_reg)
+{
+    /* C1 E8 01 F4 — SHR AX, 1; HLT. modrm=E8 → reg=5 (SHR), not SHL (reg=4).
+     * Exercises a different sub-function within case 12's extra=1 branch. */
+    setup();
+    state->regs[REG_AX] = 0x0002;
+    uint8_t code[] = { 0xC1, 0xE8, 0x01, 0xF4 };
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 0x0001);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_shift_imm_c0_rol_al_reg)
+{
+    /* C0 C0 04 F4 — ROL AL, 4; HLT. The 8-bit (0xC0) form, w=0.
+     * modrm=C0 → mod=3, reg=0 (ROL), rm=0 (AL). */
+    setup();
+    state->regs[REG_AX] = 0x0012;  /* AL = 0x12 */
+    uint8_t code[] = { 0xC0, 0xC0, 0x04, 0xF4 };
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ((uint8_t)state->regs[REG_AX], 0x21);
+    ASSERT_EQ(state->ip, 0x7C04);
+    teardown();
+}
+
+TEST(run_shift_imm_c1_shl_mem_direct)
+{
+    /* C1 26 04 02 04 F4 — SHL word [0x0204], 4; HLT.
+     * Memory operand via mod=0 rm=6 (direct 16-bit address) — exercises the
+     * path where modrm displacement adds to inst_length (2 extra bytes for
+     * the disp16 in this case). Pre-fix: inst_length = 3+2+1 = 6, IP skips
+     * past HLT. Post-fix: inst_length = 3+2 = 5, IP lands on HLT.
+     *
+     * Note: our case 12 reads the shift count from `d->data1 & 0xFF`, which
+     * for mod=0 rm=6 is the low byte of the disp16. Choosing disp=0x0204
+     * makes that low byte equal the intended imm (4), so the shift count
+     * also happens to be correct and we can assert the memory result. */
+    setup();
+    state->mem[0x0204] = 0x34;
+    state->mem[0x0205] = 0x12;
+    uint8_t code[] = { 0xC1, 0x26, 0x04, 0x02, 0x04, 0xF4 };
+    place(0x7C00, code, sizeof(code));
+    emu86_run(state, &platform, &tables, 100, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->mem[0x0204], 0x40);
+    ASSERT_EQ(state->mem[0x0205], 0x23);
+    ASSERT_EQ(state->ip, 0x7C06);
+    teardown();
+}
+
 /* === Memory fill === */
 
 TEST(run_memory_fill)
@@ -570,6 +656,10 @@ int main(void)
     RUN_TEST(run_alu_imm_81_mem_direct);
     RUN_TEST(run_alu_imm_80_mem_disp8);
     RUN_TEST(run_alu_imm_81_mem_disp16);
+    RUN_TEST(run_shift_imm_c1_shl_ax_reg);
+    RUN_TEST(run_shift_imm_c1_shr_ax_reg);
+    RUN_TEST(run_shift_imm_c0_rol_al_reg);
+    RUN_TEST(run_shift_imm_c1_shl_mem_direct);
     RUN_TEST(run_memory_fill);
 
     printf("\n%d passed, %d failed\n", test_passes, test_failures);

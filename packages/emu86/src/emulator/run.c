@@ -248,7 +248,6 @@ execute_instruction(Emu86State *s, Emu86Platform *p,
         if (d->extra) {
             /* Immediate shift count (C0/C1, 80186+) */
             count = (uint8_t)(d->data1 & 0xFF);
-            d->inst_length++;
         } else if (d->direction) {
             /* Shift by CL (D2/D3) */
             count = (uint8_t)s->regs[REG_CX]; /* CL */
