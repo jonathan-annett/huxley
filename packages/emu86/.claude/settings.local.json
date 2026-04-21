@@ -56,7 +56,10 @@
       "Bash(./test/unit/test_run)",
       "Bash(chmod:*)",
       "Bash(make test-platform:*)",
-      "Bash(make emu86:*)"
+      "Bash(make emu86:*)",
+      "Read(//home/jonathan/projects/lite/tasks/triage/**)",
+      "Read(//home/jonathan/projects/lite/tasks/completed/**)",
+      "Bash(HARNESS_STEP_LIMIT=5000 ./harness/harness reference/bios test/images/freedos.img)"
     ],
     "deny": [
       "Bash(rm -rf /)",
