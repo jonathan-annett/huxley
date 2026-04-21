@@ -8,8 +8,10 @@
 
 /* ================================================================
  * SHL / SAL — Shift Left
- * CF = last bit shifted out. OF (count=1) = CF XOR new MSB.
- * Sets SF, ZF, PF. AF undefined (cleared).
+ * CF = last bit shifted out. OF = CF XOR new MSB (applied for all
+ * nonzero counts; Intel defines OF only for count=1 but 8086tiny
+ * applies the formula unconditionally — see EMU-29).
+ * Sets SF, ZF, PF. AF preserved (EMU-20).
  * ================================================================ */
 
 static inline void
@@ -26,9 +28,7 @@ exec_shl(Emu86State *s, DecodeContext *d, uint8_t count)
 
     uint32_t result = (val << count) & MASK(w);
 
-    /* OF defined only for count=1: CF XOR MSB of result */
-    if (count == 1)
-        update_flag(s, FLAG_OF, get_flag(s, FLAG_CF) ^ SIGN_OF(result, w));
+    update_flag(s, FLAG_OF, get_flag(s, FLAG_CF) ^ SIGN_OF(result, w));
 
     set_flags_szp(s, result, w);
     write_rm(s, d, result);
@@ -36,8 +36,10 @@ exec_shl(Emu86State *s, DecodeContext *d, uint8_t count)
 
 /* ================================================================
  * SHR — Shift Right Logical
- * CF = last bit shifted out. OF (count=1) = original MSB.
- * Sets SF, ZF, PF.
+ * CF = last bit shifted out. OF = original MSB (applied for all
+ * nonzero counts; Intel defines OF only for count=1 but 8086tiny
+ * applies the formula unconditionally — see EMU-29).
+ * Sets SF, ZF, PF. AF preserved (EMU-20).
  * ================================================================ */
 
 static inline void
@@ -48,9 +50,7 @@ exec_shr(Emu86State *s, DecodeContext *d, uint8_t count)
     uint8_t w = d->operand_width;
     uint32_t val = read_rm(s, d);
 
-    /* OF (count=1) = original MSB */
-    if (count == 1)
-        update_flag(s, FLAG_OF, SIGN_OF(val, w));
+    update_flag(s, FLAG_OF, SIGN_OF(val, w));
 
     /* CF = last bit shifted out (bit at position count-1) */
     update_flag(s, FLAG_CF, (val >> (count - 1)) & 1);
@@ -63,8 +63,10 @@ exec_shr(Emu86State *s, DecodeContext *d, uint8_t count)
 
 /* ================================================================
  * SAR — Shift Right Arithmetic (preserves sign bit)
- * CF = last bit shifted out. OF (count=1) = 0.
- * Sets SF, ZF, PF.
+ * CF = last bit shifted out. OF = 0 (applied for all nonzero counts;
+ * Intel defines OF only for count=1 but 8086tiny applies the formula
+ * unconditionally — see EMU-29).
+ * Sets SF, ZF, PF. AF preserved (EMU-20).
  * ================================================================ */
 
 static inline void
@@ -95,8 +97,7 @@ exec_sar(Emu86State *s, DecodeContext *d, uint8_t count)
     else
         result = (uint32_t)sresult & MASK(w);
 
-    if (count == 1)
-        update_flag(s, FLAG_OF, 0);
+    update_flag(s, FLAG_OF, 0);
 
     set_flags_szp(s, result, w);
     write_rm(s, d, result);
@@ -104,7 +105,9 @@ exec_sar(Emu86State *s, DecodeContext *d, uint8_t count)
 
 /* ================================================================
  * ROL — Rotate Left
- * CF = new LSB (old MSB). OF (count=1) = MSB XOR CF.
+ * CF = new LSB (old MSB). OF = MSB XOR CF (applied for all nonzero
+ * counts; Intel defines OF only for count=1 but 8086tiny applies the
+ * formula unconditionally — see EMU-29).
  * Does NOT affect SF, ZF, PF, AF.
  * ================================================================ */
 
@@ -123,15 +126,16 @@ exec_rol(Emu86State *s, DecodeContext *d, uint8_t count)
     uint32_t result = ((val << count) | (val >> (bits - count))) & MASK(w);
 
     update_flag(s, FLAG_CF, result & 1);
-    if (count == 1)
-        update_flag(s, FLAG_OF, SIGN_OF(result, w) ^ get_flag(s, FLAG_CF));
+    update_flag(s, FLAG_OF, SIGN_OF(result, w) ^ get_flag(s, FLAG_CF));
 
     write_rm(s, d, result);
 }
 
 /* ================================================================
  * ROR — Rotate Right
- * CF = new MSB (old LSB). OF (count=1) = MSB XOR (MSB-1).
+ * CF = new MSB (old LSB). OF = MSB XOR (MSB-1) (applied for all
+ * nonzero counts; Intel defines OF only for count=1 but 8086tiny
+ * applies the formula unconditionally — see EMU-29).
  * Does NOT affect SF, ZF, PF, AF.
  * ================================================================ */
 
@@ -150,8 +154,7 @@ exec_ror(Emu86State *s, DecodeContext *d, uint8_t count)
     uint32_t result = ((val >> count) | (val << (bits - count))) & MASK(w);
 
     update_flag(s, FLAG_CF, SIGN_OF(result, w));
-    if (count == 1)
-        update_flag(s, FLAG_OF, SIGN_OF(result, w) ^ ((result >> (bits - 2)) & 1));
+    update_flag(s, FLAG_OF, SIGN_OF(result, w) ^ ((result >> (bits - 2)) & 1));
 
     write_rm(s, d, result);
 }

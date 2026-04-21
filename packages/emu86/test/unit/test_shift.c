@@ -525,6 +525,178 @@ TEST(rcr_word_by_1) {
     teardown();
 }
 
+/* === OF for count != 1 (EMU-29) ===
+ * Intel leaves OF undefined for shifts/rotates when count > 1. 8086tiny
+ * applies the count=1 formula unconditionally; we now align with that.
+ * Tests below cover each op with count >= 2, plus regression guards that
+ * assert OF is actively overwritten (not left at its pre-state value). */
+
+/* --- SHR --- */
+
+TEST(shr_of_set_count_4_word) {
+    /* Exact repro of the EMU-29 harness divergence at step 70,424 */
+    setup();
+    state->regs[REG_AX] = 0xFFF0;
+    DecodeContext d = unary_word(REG_AX);
+    exec_shr(state, &d, 4);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1); /* pre-shift MSB=1 */
+    teardown();
+}
+
+TEST(shr_of_clear_count_4_word) {
+    setup();
+    state->regs[REG_AX] = 0x7FFF;
+    DecodeContext d = unary_word(REG_AX);
+    exec_shr(state, &d, 4);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0); /* pre-shift MSB=0 */
+    teardown();
+}
+
+TEST(shr_of_set_count_3_byte) {
+    setup();
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_shr(state, &d, 3);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1); /* pre-shift MSB=1 */
+    teardown();
+}
+
+TEST(shr_of_overwrites_prestate_count_2) {
+    setup();
+    set_flag(state, FLAG_OF); /* pre-set OF=1 */
+    state->regs[REG_AX] = 0x0001;
+    DecodeContext d = unary_word(REG_AX);
+    exec_shr(state, &d, 2);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0); /* MSB=0 must overwrite */
+    teardown();
+}
+
+/* --- SHL --- */
+
+TEST(shl_of_set_count_2_word) {
+    setup();
+    state->regs[REG_AX] = 0x4000; /* bit 14 set */
+    DecodeContext d = unary_word(REG_AX);
+    exec_shl(state, &d, 2);
+    ASSERT_EQ(state->regs[REG_AX], 0x0000);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1); /* last bit out = bit 14 */
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1); /* CF(1) XOR MSB(0) = 1 */
+    teardown();
+}
+
+TEST(shl_of_set_count_3_word) {
+    setup();
+    state->regs[REG_AX] = 0x2000; /* bit 13 set */
+    DecodeContext d = unary_word(REG_AX);
+    exec_shl(state, &d, 3);
+    ASSERT_EQ(state->regs[REG_AX], 0x0000);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(shl_of_set_count_2_byte) {
+    setup();
+    state->regs[REG_AX] = 0x40; /* bit 6 set */
+    DecodeContext d = unary_byte(0);
+    exec_shl(state, &d, 2);
+    ASSERT_EQ(read_reg8(state, 0), 0x00);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(shl_of_overwrites_prestate_count_2) {
+    setup();
+    clear_flag(state, FLAG_OF); /* pre-state OF=0 */
+    state->regs[REG_AX] = 0x4000;
+    DecodeContext d = unary_word(REG_AX);
+    exec_shl(state, &d, 2); /* produces OF=1 */
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1); /* must be set */
+    teardown();
+}
+
+/* --- SAR --- */
+
+TEST(sar_of_zero_count_2_word) {
+    setup();
+    set_flag(state, FLAG_OF); /* pre-set to ensure it gets overwritten */
+    state->regs[REG_AX] = 0x8000;
+    DecodeContext d = unary_word(REG_AX);
+    exec_sar(state, &d, 2);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    teardown();
+}
+
+TEST(sar_of_zero_count_3_byte) {
+    setup();
+    set_flag(state, FLAG_OF);
+    state->regs[REG_AX] = 0x80;
+    DecodeContext d = unary_byte(0);
+    exec_sar(state, &d, 3);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0);
+    teardown();
+}
+
+TEST(sar_of_overwrites_prestate_count_2) {
+    setup();
+    set_flag(state, FLAG_OF);
+    state->regs[REG_AX] = 0x1234;
+    DecodeContext d = unary_word(REG_AX);
+    exec_sar(state, &d, 2);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 0); /* always 0 for SAR */
+    teardown();
+}
+
+/* --- ROL ---
+ * AX=0x4000 rol 2 → result=0x0001, CF=1, MSB=0 → OF = 0 XOR 1 = 1 */
+
+TEST(rol_of_set_count_2_word) {
+    setup();
+    state->regs[REG_AX] = 0x4000;
+    DecodeContext d = unary_word(REG_AX);
+    exec_rol(state, &d, 2);
+    ASSERT_EQ(state->regs[REG_AX], 0x0001);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 1);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(rol_of_overwrites_prestate_count_2) {
+    setup();
+    clear_flag(state, FLAG_OF);
+    state->regs[REG_AX] = 0x4000;
+    DecodeContext d = unary_word(REG_AX);
+    exec_rol(state, &d, 2); /* produces OF=1 */
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+/* --- ROR ---
+ * AX=0x0001 ror 2 → result=0x4000, CF=0, bit14=1, MSB=0
+ *   → OF = MSB(0) XOR bit14(1) = 1 */
+
+TEST(ror_of_set_count_2_word) {
+    setup();
+    state->regs[REG_AX] = 0x0001;
+    DecodeContext d = unary_word(REG_AX);
+    exec_ror(state, &d, 2);
+    ASSERT_EQ(state->regs[REG_AX], 0x4000);
+    ASSERT_EQ(get_flag(state, FLAG_CF), 0);
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
+TEST(ror_of_overwrites_prestate_count_2) {
+    setup();
+    clear_flag(state, FLAG_OF);
+    state->regs[REG_AX] = 0x0001;
+    DecodeContext d = unary_word(REG_AX);
+    exec_ror(state, &d, 2); /* produces OF=1 */
+    ASSERT_EQ(get_flag(state, FLAG_OF), 1);
+    teardown();
+}
+
 int main(void) {
     printf("test_shift:\n");
     /* SHL */
@@ -560,6 +732,15 @@ int main(void) {
     /* AF preservation across rotates (regression guards) */
     RUN_TEST(rol_preserves_af_set); RUN_TEST(ror_preserves_af_set);
     RUN_TEST(rcl_preserves_af_set); RUN_TEST(rcr_preserves_af_set);
+    /* OF for count != 1 (EMU-29) */
+    RUN_TEST(shr_of_set_count_4_word); RUN_TEST(shr_of_clear_count_4_word);
+    RUN_TEST(shr_of_set_count_3_byte); RUN_TEST(shr_of_overwrites_prestate_count_2);
+    RUN_TEST(shl_of_set_count_2_word); RUN_TEST(shl_of_set_count_3_word);
+    RUN_TEST(shl_of_set_count_2_byte); RUN_TEST(shl_of_overwrites_prestate_count_2);
+    RUN_TEST(sar_of_zero_count_2_word); RUN_TEST(sar_of_zero_count_3_byte);
+    RUN_TEST(sar_of_overwrites_prestate_count_2);
+    RUN_TEST(rol_of_set_count_2_word); RUN_TEST(rol_of_overwrites_prestate_count_2);
+    RUN_TEST(ror_of_set_count_2_word); RUN_TEST(ror_of_overwrites_prestate_count_2);
     printf("\n%d passed, %d failed\n", test_passes, test_failures);
     return test_failures ? 1 : 0;
 }

@@ -207,3 +207,19 @@ Cross-checked against HARNESS_STEP_LIMIT=70423 — matches.
 Notes: User suggested buffer-rotation optimisation — small
 buffers per side, pointer swap at clean-step boundary, so pre
 state is free at divergence time.
+
+## EMU-29
+Date: 2026-04-22
+Status: PASS
+Test results: test_shift 77 → 102 (15 new OF-for-count>1 tests
+              across SHL/SHR/SAR/ROL/ROR, 25 new assertions; full
+              suite green, 0 failures).
+Harness: advances past step 70,424; next divergence at step
+         1,103,526 (AX register mismatch at 9001:CBA4, opcode
+         8B 46 06 = MOV AX,[BP+6] — EMU-30 territory).
+Notes: Dropped "if count == 1" guards around OF updates in SHL,
+SHR, SAR, ROL, ROR. Formulas unchanged — they were already
+correct for count=1. Fourth Intel-undefined-flag alignment
+(after EMU-20, EMU-26, EMU-27). The pattern — Intel undefined,
+reference has specific behaviour, align — is now firm; a later
+task will consolidate into docs.
