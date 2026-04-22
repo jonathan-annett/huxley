@@ -55,3 +55,4 @@ packages/emu86/harness/obj/
 
 # Task deploy scripts — brief is captured in tasks/*.md, script itself is ephemeral
 emu*-task.sh
+tools
