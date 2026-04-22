@@ -952,7 +952,7 @@ void harness_step_end(void)
         populate_our_snapshot(next_our);
         rotate_snapshots();
         harness_step_count++;
-        if (harness_step_count >= harness_step_limit) {
+        if (harness_step_limit > 0 && harness_step_count >= harness_step_limit) {
             fprintf(stderr, "harness: SELFTEST PASS — %llu steps, "
                             "zero divergences after snapshot-compare each step.\n",
                     (unsigned long long)harness_step_count);
@@ -1091,7 +1091,7 @@ void harness_step_end(void)
         harness_control_tick();
     }
 
-if (harness_step_count >= harness_step_limit) {
+if (harness_step_limit > 0 && harness_step_count >= harness_step_limit) {
         fprintf(stderr, "harness: reached step limit %llu with no divergence. "
                         "Final CS:IP=%04X:%04X\n",
                 (unsigned long long)harness_step_count,
