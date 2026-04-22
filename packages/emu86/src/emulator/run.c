@@ -230,12 +230,16 @@ execute_instruction(Emu86State *s, Emu86Platform *p,
                 write_reg16(s, d->reg,
                     (uint16_t)(d->rm_addr - ((uint32_t)seg << 4)));
             }
-            /* LEA idiom: reference sets seg_override_en=1 as a side effect of
-             * its "compute offset via segment-override machinery" trick. We
-             * don't use that trick (we reconstruct the offset directly), but we
-             * set the flag anyway to keep internal state aligned for harness
-             * lockstep. Decremented to 0 before next instruction executes, so
-             * no CPU-visible effect. See docs/notes/8086tiny-quirks.md. */
+            /* LEA idiom: reference sets seg_override_en=1 as a side effect
+             * of its "compute offset via segment-override machinery" trick.
+             * We don't use that trick (we reconstruct the offset directly),
+             * but we set the flag anyway to keep internal state aligned for
+             * the harness comparator. The flag is decremented to 0 at the
+             * top of the NEXT step's loop, before that instruction's decode,
+             * so the override has no effect on the next instruction's
+             * effective-address computation. Prior to EMU-30 the decrement
+             * ran after decode, causing a leak into the next instruction.
+             * See docs/notes/8086tiny-quirks.md. */
             s->seg_override_en = 1;
         } else {
             /* POP r/m (8F) */
@@ -562,14 +566,21 @@ void emu86_run(Emu86State *s, Emu86Platform *p,
             return;
         }
 
-        /* 4. Decode instruction at CS:IP */
-        decode_instruction(s, t, &d);
-
-        /* 5. Decrement prefix override counters */
+        /* 4. Decrement prefix override counters at top of step.
+         * The reference 8086tiny decrements these before decode, so
+         * decode sees the post-decrement value for this step. LEA in
+         * particular sets seg_override_en=1 as a side effect (see
+         * case 10 below); without this ordering, that 1 leaks into
+         * the next instruction's decode and wrongly applies the
+         * override to its effective-address computation. EMU-30
+         * moved these from after-decode to here. */
         if (s->seg_override_en)
             s->seg_override_en--;
         if (s->rep_override_en)
             s->rep_override_en--;
+
+        /* 5. Decode instruction at CS:IP */
+        decode_instruction(s, t, &d);
 
         /* 6. Execute */
         execute_instruction(s, p, t, &d);

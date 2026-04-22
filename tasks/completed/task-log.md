@@ -223,3 +223,25 @@ correct for count=1. Fourth Intel-undefined-flag alignment
 (after EMU-20, EMU-26, EMU-27). The pattern — Intel undefined,
 reference has specific behaviour, align — is now firm; a later
 task will consolidate into docs.
+
+## EMU-30
+Date: 2026-04-22
+Status: PASS
+Test results: 1560 → 1561 (1 new regression test
+              run_lea_then_mov_no_override_leak; full suite green).
+Harness: advances past step 1,103,526; ran clean through step
+         1,692,000 when stopped (runtime-bound, not step-limit-
+         bound). No new divergence observed in the 589K steps
+         of FreeDOS runtime past the old bug. Whether a further
+         divergence exists beyond that point is EMU-31 territory.
+Notes: Moved seg_override_en/rep_override_en decrements from
+after-decode to before-decode in the main step loop. Fixes the
+"LEA side-effect seg_override_en=1 leaks into next instruction's
+decode" bug. The comment on the LEA handler incorrectly claimed
+"no CPU-visible effect" from the flag-set; that was true only
+if the decrement happened before decode, which it didn't until
+now. Also extended the EMU-28 pre-step snapshot's Status line
+to include seg_override (the sreg index), a small hygiene
+improvement for diagnosing future segment-related divergences.
+Structural-bug shape (ordering of internal bookkeeping), not
+the per-instruction-flag shape of EMU-26/27/29.

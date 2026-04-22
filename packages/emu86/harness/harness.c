@@ -607,8 +607,9 @@ report_divergence(uint32_t dflags, uint32_t mem_addr, uint32_t io_addr,
             pre_ref->sregs[2], pre_ref->sregs[3]);
     fprintf(stderr, "FLAGS            : %04X\n", pre_ref->flags);
     fprintf(stderr, "Status           : int8_asap=%u seg_ovr_en=%u "
-                    "rep_ovr_en=%u TF=%u\n",
+                    "seg_ovr=%u rep_ovr_en=%u TF=%u\n",
             pre_ref->int8_asap, pre_ref->seg_override_en,
+            pre_ref->seg_override,
             pre_ref->rep_override_en, pre_ref->trap_flag);
 
     fprintf(stderr, "\n-- Post-step divergence (after step %llu executed) --\n",

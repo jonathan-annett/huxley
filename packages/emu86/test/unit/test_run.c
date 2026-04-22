@@ -773,6 +773,45 @@ TEST(run_lea_flags_unchanged)
     teardown();
 }
 
+/* EMU-30 regression guard: LEA's seg_override_en=1 side effect must not
+ * leak into the next instruction's decode. Before EMU-30 the main loop
+ * decremented seg_override_en after decode, so the next step's decode
+ * saw the stale 1 and applied a segment override to its effective-
+ * address computation. Caught in FreeDOS at step 1,103,526 as a
+ * MOV AX, [BP+6] reading from the wrong segment. */
+TEST(run_lea_then_mov_no_override_leak)
+{
+    setup();
+    uint8_t code[] = {
+        0x8D, 0x5D, 0x10,   /* LEA BX, [DI+0x10] — sets seg_override_en=1 */
+        0x8B, 0x46, 0x06,   /* MOV AX, [BP+0x06] — BP default seg is SS */
+        0xF4                /* HLT */
+    };
+    place(0x7C00, code, sizeof(code));
+
+    /* Distinct segments so an override leak is observable.
+     *   SS:[BP+6] linear = 0x04006 → 0x0516 (correct, SS is default for BP)
+     *   ES:[BP+6] linear = 0x14006 → 0x8002 (what a leaked override reads) */
+    state->sregs[SREG_SS] = 0x0000;
+    state->sregs[SREG_ES] = 0x1000;
+    state->regs[REG_BP]   = 0x4000;
+    state->regs[REG_DI]   = 0x0040;
+    state->mem[0x04006] = 0x16;
+    state->mem[0x04007] = 0x05;
+    state->mem[0x14006] = 0x02;
+    state->mem[0x14007] = 0x80;
+    /* LEA sets seg_override_en but not seg_override. Pin seg_override
+     * to ES so the leaked-override path reads from ES, making the
+     * test sensitive regardless of the pre-LEA default. */
+    state->seg_override = SREG_ES;
+    state->seg_override_en = 0;
+
+    emu86_run(state, &platform, &tables, 2000, &yield);
+    ASSERT_EQ(yield.reason, EMU86_YIELD_HALTED);
+    ASSERT_EQ(state->regs[REG_AX], 0x0516);
+    teardown();
+}
+
 /* === Memory fill === */
 
 TEST(run_memory_fill)
@@ -835,6 +874,7 @@ int main(void)
     RUN_TEST(run_lea_sets_seg_override_en);
     RUN_TEST(run_lea_result_unchanged);
     RUN_TEST(run_lea_flags_unchanged);
+    RUN_TEST(run_lea_then_mov_no_override_leak);
     RUN_TEST(run_memory_fill);
 
     printf("\n%d passed, %d failed\n", test_passes, test_failures);
