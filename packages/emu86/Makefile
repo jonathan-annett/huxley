@@ -51,7 +51,7 @@ wasm:
 test: test-unit test-integration
 
 .PHONY: test-unit
-test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io test-run test-platform
+test-unit: test-snapshot test-ringbuf test-decode test-arithmetic test-logic test-shift test-transfer test-string test-control test-flags-io test-run test-platform test-harness-control
 
 .PHONY: test-snapshot
 test-snapshot:
@@ -113,6 +113,11 @@ test-platform:
 	$(CC) $(CFLAGS) -o test/unit/test_platform_linux test/unit/test_platform_linux.c -Isrc/emulator -Isrc/hosts/linux
 	./test/unit/test_platform_linux
 
+.PHONY: test-harness-control
+test-harness-control:
+	$(CC) $(CFLAGS) -o test/unit/test_harness_control test/unit/test_harness_control.c harness/control.c -Iharness
+	./test/unit/test_harness_control
+
 .PHONY: test-integration
 test-integration:
 	@echo "TODO: Not yet implemented."
@@ -152,6 +157,9 @@ $(HARNESS_OBJ_DIR)/overrides.o: harness/overrides.c | $(HARNESS_OBJ_DIR)
 $(HARNESS_OBJ_DIR)/harness.o: harness/harness.c | $(HARNESS_OBJ_DIR)
 	$(CC) -O2 -Wall -Isrc/emulator -c $< -o $@
 
+$(HARNESS_OBJ_DIR)/control.o: harness/control.c harness/control.h | $(HARNESS_OBJ_DIR)
+	$(CC) -O2 -Wall -c $< -o $@
+
 $(HARNESS_OBJ_DIR)/run.o: src/emulator/run.c | $(HARNESS_OBJ_DIR)
 	$(CC) -O2 -Wall -Isrc/emulator -c $< -o $@
 
@@ -161,6 +169,7 @@ harness: $(HARNESS_BIN)
 $(HARNESS_BIN): $(HARNESS_OBJ_DIR)/reference.o \
                 $(HARNESS_OBJ_DIR)/overrides.o \
                 $(HARNESS_OBJ_DIR)/harness.o \
+                $(HARNESS_OBJ_DIR)/control.o \
                 $(HARNESS_OBJ_DIR)/run.o
 	$(CC) -o $@ $^
 
@@ -171,4 +180,4 @@ clean:
 	rm -f src/emulator/*.o
 	rm -rf dist/
 	rm -rf $(HARNESS_OBJ_DIR) $(HARNESS_BIN)
-	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run test/unit/test_platform_linux
+	rm -f test/unit/*.o test/unit/test_snapshot test/unit/test_ringbuf test/unit/test_decode test/unit/test_arithmetic test/unit/test_logic test/unit/test_shift test/unit/test_transfer test/unit/test_string test/unit/test_control test/unit/test_flags_io test/unit/test_run test/unit/test_platform_linux test/unit/test_harness_control

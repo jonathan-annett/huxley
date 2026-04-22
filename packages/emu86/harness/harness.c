@@ -20,6 +20,7 @@
 #include "run.h"
 #include "platform.h"
 #include "tables.h"
+#include "control.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <time.h>
 
 /* Scratch directory for per-emulator disk copies (EMU-17). Each run overwrites
@@ -157,6 +161,31 @@ static int       last_consumed_byte_present;
 static int       harness_fast_compare;
 static uint64_t  compare_cheap_count;
 static uint64_t  compare_full_count;
+
+/* EMU-34: control plane. HARNESS_CONTROL=1 enables a UDP socket bound to
+ * 127.0.0.1:<HARNESS_CONTROL_PORT>. Line-based text commands ("set x 1",
+ * "get step_count", etc.) are parsed through a transport-agnostic handler
+ * so the WASM port is a drop-in wrapper change. */
+static int      harness_control_enabled;
+static int      harness_control_fd = -1;
+static uint16_t harness_control_port = 7071;
+
+static void harness_control_tick(void);
+
+/* Variable table exposed to the control plane. Pointers reference the
+ * harness globals above; harness_control_set_vars() registers this table
+ * with the dispatcher at startup. */
+static const ControlVar control_vars[] = {
+    { "fast_compare",    VT_BOOL, 0, &harness_fast_compare     },
+    { "heartbeat_every", VT_U64,  0, &harness_heartbeat_every  },
+    { "step_limit",      VT_U64,  0, &harness_step_limit       },
+    { "step_count",      VT_U64,  1, &harness_step_count       },
+    { "compare_cheap",   VT_U64,  1, &compare_cheap_count      },
+    { "compare_full",    VT_U64,  1, &compare_full_count       },
+    { "split_output",    VT_BOOL, 1, &harness_split_output     },
+    { "kbd_enabled",     VT_BOOL, 1, &kbd_enabled              },
+    { NULL, 0, 0, NULL }
+};
 
 /* ================================================================
  * Platform callbacks for our emulator
@@ -1055,6 +1084,13 @@ void harness_step_end(void)
         harness_emit_heartbeat();
     }
 
+    /* EMU-34: service the control socket at a bounded cadence. Non-blocking
+     * recvfrom with nothing waiting is cheap; 1000 steps caps syscall overhead
+     * well below human-perceptible latency at any realistic step rate. */
+    if (harness_control_enabled && harness_step_count % 1000 == 0) {
+        harness_control_tick();
+    }
+
 if (harness_step_count >= harness_step_limit) {
         fprintf(stderr, "harness: reached step limit %llu with no divergence. "
                         "Final CS:IP=%04X:%04X\n",
@@ -1286,6 +1322,89 @@ maybe_setup_fast_compare(void)
     fflush(stderr);
 }
 
+/* EMU-34: if HARNESS_CONTROL=1, bind a UDP socket on 127.0.0.1:<port> and
+ * register the variable table with the transport-agnostic dispatcher. The
+ * dispatcher itself lives in harness/control.c and knows nothing about
+ * sockets — the tick below drives it. */
+static void
+maybe_setup_control(void)
+{
+    const char *env = getenv("HARNESS_CONTROL");
+    if (!env || strcmp(env, "1") != 0) return;
+    harness_control_enabled = 1;
+
+    const char *port_env = getenv("HARNESS_CONTROL_PORT");
+    if (port_env) {
+        char *end;
+        unsigned long p = strtoul(port_env, &end, 10);
+        if (*end == '\0' && p > 0 && p < 65536)
+            harness_control_port = (uint16_t)p;
+    }
+
+    harness_control_fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    if (harness_control_fd < 0) {
+        fprintf(stderr, "harness: control socket() failed: %s\n",
+                strerror(errno));
+        exit(1);
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(harness_control_port);
+
+    if (bind(harness_control_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        fprintf(stderr, "harness: control bind(127.0.0.1:%u) failed: %s\n",
+                harness_control_port, strerror(errno));
+        exit(1);
+    }
+
+    harness_control_set_vars(control_vars);
+
+    fprintf(stderr, "harness: control plane active on 127.0.0.1:%u\n"
+                    "         Example: printf 'get all' | nc -u -w 1 127.0.0.1 %u\n",
+            harness_control_port, harness_control_port);
+    fflush(stderr);
+}
+
+/* Drain any pending datagrams, dispatch each through the transport-agnostic
+ * core, reply to the sender. Called from harness_step_end at a fixed cadence
+ * to bound recvfrom syscall cost. Non-blocking socket — EAGAIN exits the
+ * loop cleanly. */
+static void
+harness_control_tick(void)
+{
+    if (!harness_control_enabled) return;
+
+    for (;;) {
+        char inbuf[512];
+        struct sockaddr_in from;
+        socklen_t fromlen = sizeof(from);
+        ssize_t n = recvfrom(harness_control_fd, inbuf, sizeof(inbuf) - 1, 0,
+                             (struct sockaddr *)&from, &fromlen);
+        if (n < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                fprintf(stderr, "harness: control recvfrom: %s\n",
+                        strerror(errno));
+            }
+            return;
+        }
+        inbuf[n] = '\0';
+
+        char outbuf[4096];
+        outbuf[0] = '\0';
+        harness_control_handle(inbuf, outbuf, sizeof(outbuf));
+
+        size_t outlen = strlen(outbuf);
+        if (outlen > 0) {
+            ssize_t w = sendto(harness_control_fd, outbuf, outlen, 0,
+                               (struct sockaddr *)&from, fromlen);
+            (void)w; /* best effort */
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3 || argc > 4) {
@@ -1402,6 +1521,7 @@ int main(int argc, char **argv)
     maybe_setup_split_output();
     maybe_setup_kbd_input();
     maybe_setup_fast_compare();
+    maybe_setup_control();
 
     return reference_main(ref_argc, ref_argv);
 }

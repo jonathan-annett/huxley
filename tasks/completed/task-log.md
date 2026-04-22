@@ -271,3 +271,20 @@ Notes: Makes interactive harness use practical. Key enabler for
 EMU-35 (debug.com acceptance test). Full-rate on FreeDOS boot
 was 2.2% (11042 full compares out of 500000 steps) — well within
 the 1-10% REP-heavy range the task brief predicted.
+
+## EMU-34
+Date: 2026-04-22
+Status: PASS
+Test results: 1560 existing + 14 new control-plane tests (47 assertions) green
+Harness: adds HARNESS_CONTROL=1 UDP control plane. Commands:
+ping, help, get <name>, set <name> <value>. Transport-agnostic
+core handler (harness/control.c + control.h) enables drop-in
+WASM port via postMessage wrapper.
+Notes: Tool at tools/harness-ctl.sh wraps nc -u for shell use.
+Read-only knobs: step_count, compare_cheap, compare_full,
+split_output, kbd_enabled. Read-write knobs: fast_compare,
+heartbeat_every, step_limit. Verified behavioural toggle of
+fast_compare live on FreeDOS prompt: cheap counter freezes
+and full counter climbs 1:1 with steps when fast_compare=0,
+flipping back resumes fast path. 30s of sustained control-plane
+traffic caused zero lockstep divergence.
