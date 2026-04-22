@@ -16,16 +16,29 @@
  * All disk reads (read(disk[n], ...)) pass through to the real syscall.
  */
 
+#include <stdint.h>
 #include <time.h>
 #include <sys/timeb.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+/* EMU-32: defined in harness.c. Pulls one byte from the harness's keyboard
+ * queue (filled by drain_kbd_fifo) and records it so the harness can push
+ * the same byte into our emulator's console_in ringbuf before our matching
+ * step runs. Returns 1 and writes *byte_out on success, 0 if queue empty. */
+extern int harness_consume_kbd_byte(uint8_t *byte_out);
+
 /* read(): forward to real libc read() for any fd except stdin (0). */
 ssize_t harness_read(int fd, void *buf, size_t count)
 {
-    if (fd == 0)
-        return 0;   /* no keyboard input in harness mode */
+    if (fd == 0) {
+        if (count == 0) return 0;
+        uint8_t byte;
+        if (!harness_consume_kbd_byte(&byte))
+            return 0;   /* no key available */
+        ((uint8_t *)buf)[0] = byte;
+        return 1;
+    }
     return read(fd, buf, count);
 }
 

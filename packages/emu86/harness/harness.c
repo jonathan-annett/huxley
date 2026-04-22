@@ -136,6 +136,20 @@ static int       harness_split_output;
 static int       ref_fifo_fd = -1;
 static int       hux_fifo_fd = -1;
 
+/* EMU-32: keyboard input. When HARNESS_KBD_INPUT=1, a named pipe at
+ * /tmp/emu86-harness/kbd.in accepts bytes. Bytes drain into kbd_queue each
+ * step; reference's harness_read(0,...) consumes one byte per call at its
+ * timer-tick keyboard-poll moment; the same byte is then pushed into our
+ * emulator's console_in ringbuf before our step runs, preserving lockstep. */
+#define KBD_QUEUE_SIZE 256
+static uint8_t   kbd_queue[KBD_QUEUE_SIZE];
+static uint32_t  kbd_queue_head;   /* next byte to consume (grows unbounded) */
+static uint32_t  kbd_queue_tail;   /* next write position (grows unbounded) */
+static int       kbd_fifo_fd = -1;
+static int       kbd_enabled;
+static uint8_t   last_consumed_byte;
+static int       last_consumed_byte_present;
+
 /* ================================================================
  * Platform callbacks for our emulator
  * ================================================================ */
@@ -771,6 +785,53 @@ harness_emit_heartbeat(void)
 }
 
 /* ================================================================
+ * EMU-32: keyboard input — consume called from overrides.c
+ *
+ * Called by harness_read(0, ...) at reference's timer-tick keyboard
+ * poll moment. Removes one byte from kbd_queue and remembers it so
+ * the harness step loop can push the same byte into our emulator's
+ * console_in ringbuf before our matching step runs.
+ * ================================================================ */
+
+int harness_consume_kbd_byte(uint8_t *byte_out)
+{
+    if (kbd_queue_head == kbd_queue_tail) return 0; /* empty */
+    *byte_out = kbd_queue[kbd_queue_head % KBD_QUEUE_SIZE];
+    kbd_queue_head++;
+    last_consumed_byte = *byte_out;
+    last_consumed_byte_present = 1;
+    static int announced_first;
+    if (!announced_first) {
+        announced_first = 1;
+        fprintf(stderr, "harness: first kbd byte consumed 0x%02X at step %llu\n",
+                *byte_out, (unsigned long long)harness_step_count);
+        fflush(stderr);
+    }
+    return 1;
+}
+
+/* Drain available bytes from the kbd.in fifo into the queue. Called once
+ * per step before reference runs — bytes typed since last step become
+ * available to reference's next keyboard poll. */
+static void drain_kbd_fifo(void)
+{
+    if (!kbd_enabled) return;
+    for (;;) {
+        uint32_t used = kbd_queue_tail - kbd_queue_head;
+        uint32_t free_space = KBD_QUEUE_SIZE - used;
+        if (free_space == 0) break;
+        uint8_t buf[64];
+        size_t to_read = free_space < sizeof(buf) ? free_space : sizeof(buf);
+        ssize_t n = read(kbd_fifo_fd, buf, to_read);
+        if (n <= 0) break;
+        for (ssize_t i = 0; i < n; i++) {
+            kbd_queue[kbd_queue_tail % KBD_QUEUE_SIZE] = buf[i];
+            kbd_queue_tail++;
+        }
+    }
+}
+
+/* ================================================================
  * The two hooks called from sim()
  * ================================================================ */
 
@@ -778,6 +839,10 @@ void harness_step_begin(void)
 {
     if (!harness_initialised)
         harness_init();
+
+    /* EMU-32: pull any newly-typed bytes into the queue before reference's
+     * next timer-tick keyboard poll. No-op unless HARNESS_KBD_INPUT=1. */
+    drain_kbd_fifo();
 }
 
 void harness_step_end(void)
@@ -829,6 +894,15 @@ void harness_step_end(void)
             exit(0);
         }
         return;
+    }
+
+    /* EMU-32: if reference consumed a keyboard byte during this sim()
+     * iteration (at its timer-tick poll just above HARNESS_STEP_END),
+     * replicate the same byte into our emulator's console_in ringbuf
+     * so our matching step observes it at the same simulated step. */
+    if (last_consumed_byte_present) {
+        ringbuf_write(&our_platform.console_in, last_consumed_byte);
+        last_consumed_byte_present = 0;
     }
 
     /* Step our emulator by exactly one instruction. */
@@ -1096,6 +1170,37 @@ maybe_setup_split_output(void)
     fflush(stderr);
 }
 
+/* EMU-32: if HARNESS_KBD_INPUT=1, create /tmp/emu86-harness/kbd.in as a fifo
+ * and open it O_RDWR | O_NONBLOCK. Bytes written to the fifo are drained into
+ * kbd_queue each step and delivered synchronously to both emulators at their
+ * shared timer-tick keyboard-poll moment. */
+static void
+maybe_setup_kbd_input(void)
+{
+    const char *env = getenv("HARNESS_KBD_INPUT");
+    if (!env || strcmp(env, "1") != 0) return;
+    kbd_enabled = 1;
+
+    const char *kbd_path = HARNESS_SCRATCH_DIR "/kbd.in";
+    if (mkfifo(kbd_path, 0666) < 0 && errno != EEXIST) {
+        fprintf(stderr, "harness: mkfifo(%s) failed: %s\n",
+                kbd_path, strerror(errno));
+        exit(1);
+    }
+
+    kbd_fifo_fd = open(kbd_path, O_RDWR | O_NONBLOCK);
+    if (kbd_fifo_fd < 0) {
+        fprintf(stderr, "harness: open(%s) failed: %s\n",
+                kbd_path, strerror(errno));
+        exit(1);
+    }
+
+    fprintf(stderr, "harness: keyboard input active.\n"
+                    "         To send bytes: echo -n $'dir\\r' > %s\n",
+            kbd_path);
+    fflush(stderr);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3 || argc > 4) {
@@ -1210,6 +1315,7 @@ int main(int argc, char **argv)
      * scratch-file banner (goes to stderr, unaffected by the fd 1 redirect)
      * and before reference_main() runs any PUTCHAR. */
     maybe_setup_split_output();
+    maybe_setup_kbd_input();
 
     return reference_main(ref_argc, ref_argv);
 }
