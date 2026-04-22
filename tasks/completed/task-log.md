@@ -245,3 +245,17 @@ to include seg_override (the sreg index), a small hygiene
 improvement for diagnosing future segment-related divergences.
 Structural-bug shape (ordering of internal bookkeeping), not
 the per-instruction-flag shape of EMU-26/27/29.
+
+## EMU-31
+Date: 2026-04-22
+Status: PASS
+Test results: unchanged (harness-only change; 1560 passed, 0 failed)
+Harness: adds HARNESS_SPLIT_OUTPUT=1 mode. Reference fd 1 and
+our console_out each go to a named pipe. Verified visually:
+both fifos received identical bytes ("FreeDOS" banner start)
+with two cat readers attached. Default mode unchanged —
+stdout still shows "FreeDOS" as before.
+Notes: Step toward interactive harness use. Default behaviour
+preserved. No emulator correctness changes. O_RDWR fifos so
+the writer never blocks on a missing reader; SIGPIPE ignored
+so reader Ctrl-C doesn't kill the harness.

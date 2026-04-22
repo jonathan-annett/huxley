@@ -30,6 +30,7 @@
 #include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -126,6 +127,14 @@ static uint64_t  harness_last_heartbeat_us;
  * emulator touches the source disk image. Empty string = not provided. */
 static char      hux_floppy_path[PATH_MAX];
 static char      hux_hd_path[PATH_MAX];
+
+/* EMU-31: split-output mode. When HARNESS_SPLIT_OUTPUT=1, reference fd 1 and
+ * our emulator's console_out ringbuf each go to a named pipe in the scratch
+ * dir, so both streams can be observed in parallel (e.g. cat on two terminals).
+ * Default off: ref writes to terminal, our ringbuf drains silently, as before. */
+static int       harness_split_output;
+static int       ref_fifo_fd = -1;
+static int       hux_fifo_fd = -1;
 
 /* ================================================================
  * Platform callbacks for our emulator
@@ -826,12 +835,19 @@ void harness_step_end(void)
     Emu86YieldInfo yi;
     emu86_run(our_state, &our_platform, &our_tables, 1, &yi);
 
-    /* Drain console_out silently — the reference writes to stdout directly,
-     * so if we also write we'd double the output. Our state matches ref's
-     * observable bytes at the AL-write instant; the byte in our ring buffer
-     * is therefore identical to ref's stdout byte. */
+    /* Drain console_out. Default: discard silently — the reference writes
+     * to stdout directly, so if we also wrote we'd double the output. Our
+     * state matches ref's observable bytes at the AL-write instant; the
+     * byte in our ring buffer is therefore identical to ref's stdout byte.
+     * EMU-31: under HARNESS_SPLIT_OUTPUT=1, forward each drained byte to
+     * the hux fifo. Best-effort write — EPIPE/EAGAIN just drops the byte. */
     uint8_t ch;
-    while (ringbuf_read(&our_platform.console_out, &ch) == 0) { (void)ch; }
+    while (ringbuf_read(&our_platform.console_out, &ch) == 0) {
+        if (harness_split_output) {
+            ssize_t w = write(hux_fifo_fd, &ch, 1);
+            (void)w;
+        }
+    }
 
     harness_step_count++;
 
@@ -1021,6 +1037,65 @@ usage(const char *prog)
         prog, HARNESS_SCRATCH_DIR);
 }
 
+/* EMU-31: if HARNESS_SPLIT_OUTPUT=1, route reference fd 1 into one fifo and
+ * our emulator's console_out drain into another, so both streams can be
+ * observed side-by-side during interactive use. The fifos live under
+ * HARNESS_SCRATCH_DIR and are opened O_RDWR so the writer never blocks on
+ * a missing reader. SIGPIPE is ignored so a reader Ctrl-C doesn't kill the
+ * harness; writes past a disconnected reader simply return EPIPE and the
+ * byte is dropped. */
+static void
+maybe_setup_split_output(void)
+{
+    const char *env = getenv("HARNESS_SPLIT_OUTPUT");
+    if (!env || strcmp(env, "1") != 0) return;
+    harness_split_output = 1;
+
+    const char *ref_path = HARNESS_SCRATCH_DIR "/ref.out";
+    const char *hux_path = HARNESS_SCRATCH_DIR "/hux.out";
+
+    if (mkfifo(ref_path, 0666) < 0 && errno != EEXIST) {
+        fprintf(stderr, "harness: mkfifo(%s) failed: %s\n",
+                ref_path, strerror(errno));
+        exit(1);
+    }
+    if (mkfifo(hux_path, 0666) < 0 && errno != EEXIST) {
+        fprintf(stderr, "harness: mkfifo(%s) failed: %s\n",
+                hux_path, strerror(errno));
+        exit(1);
+    }
+
+    ref_fifo_fd = open(ref_path, O_RDWR);
+    if (ref_fifo_fd < 0) {
+        fprintf(stderr, "harness: open(%s) failed: %s\n",
+                ref_path, strerror(errno));
+        exit(1);
+    }
+    hux_fifo_fd = open(hux_path, O_RDWR);
+    if (hux_fifo_fd < 0) {
+        fprintf(stderr, "harness: open(%s) failed: %s\n",
+                hux_path, strerror(errno));
+        exit(1);
+    }
+
+    /* Survive a reader disconnect: writes to a broken pipe return EPIPE
+     * instead of killing the process. */
+    signal(SIGPIPE, SIG_IGN);
+
+    /* Redirect reference's fd 1 onto the ref fifo. Must happen before
+     * reference_main() runs any PUTCHAR. */
+    if (dup2(ref_fifo_fd, 1) < 0) {
+        fprintf(stderr, "harness: dup2 failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    fprintf(stderr, "harness: split-output mode active.\n"
+                    "         Open a terminal and: cat %s\n"
+                    "         Open another and:    cat %s\n",
+                    ref_path, hux_path);
+    fflush(stderr);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3 || argc > 4) {
@@ -1129,6 +1204,12 @@ int main(int argc, char **argv)
     if (hd_src)
         ref_argv[ref_argc++] = hd_ref_arg;
     ref_argv[ref_argc] = NULL;
+
+    /* EMU-31: optionally split reference fd 1 and our console_out drain into
+     * two named pipes, for parallel observation. Must happen after the
+     * scratch-file banner (goes to stderr, unaffected by the fd 1 redirect)
+     * and before reference_main() runs any PUTCHAR. */
+    maybe_setup_split_output();
 
     return reference_main(ref_argc, ref_argv);
 }
