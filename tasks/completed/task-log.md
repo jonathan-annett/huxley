@@ -259,3 +259,15 @@ Notes: Step toward interactive harness use. Default behaviour
 preserved. No emulator correctness changes. O_RDWR fifos so
 the writer never blocks on a missing reader; SIGPIPE ignored
 so reader Ctrl-C doesn't kill the harness.
+
+## EMU-33
+Date: 2026-04-22
+Status: PASS
+Test results: unchanged (harness-only change; 1560 passed, 0 failed)
+Harness: adds HARNESS_FAST_COMPARE=1 mode. Skips per-step memory
+scan; runs full compare on REP or on divergence. Measured 44x
+speedup on FreeDOS boot (192.70s → 4.36s for 500k steps).
+Notes: Makes interactive harness use practical. Key enabler for
+EMU-35 (debug.com acceptance test). Full-rate on FreeDOS boot
+was 2.2% (11042 full compares out of 500000 steps) — well within
+the 1-10% REP-heavy range the task brief predicted.

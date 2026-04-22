@@ -150,6 +150,14 @@ static int       kbd_enabled;
 static uint8_t   last_consumed_byte;
 static int       last_consumed_byte_present;
 
+/* EMU-33: fast-compare mode. HARNESS_FAST_COMPARE=1 skips the per-step
+ * 1MB memory scan in compare_states_full; the cheap comparator still runs
+ * every step and a full compare runs only when a REP was active this step
+ * or when cheap found a divergence (to enrich the report). */
+static int       harness_fast_compare;
+static uint64_t  compare_cheap_count;
+static uint64_t  compare_full_count;
+
 /* ================================================================
  * Platform callbacks for our emulator
  * ================================================================ */
@@ -491,13 +499,15 @@ static void rotate_snapshots(void)
 #define DIV_SPKR_EN      0x00000400
 #define DIV_IO_HI_LO     0x00000800
 
+/* Cheap half of the compare: everything that's O(1) — registers, flags,
+ * prefix state, trap/int8/inst_count, spkr_en, pit_lobyte_pending.
+ * Does NOT scan memory or io_ports; DIV_MEM / DIV_IO_PORTS are never set.
+ * EMU-33: called every step under HARNESS_FAST_COMPARE=1; the full scan
+ * then runs only on REP or on cheap divergence. */
 static uint32_t
-compare_states(uint32_t *mem_diff_addr, uint32_t *io_diff_addr,
-               uint32_t *reg_diff_idx)
+compare_states_cheap(uint32_t *reg_diff_idx)
 {
     uint32_t flags = 0;
-    *mem_diff_addr = 0xFFFFFFFF;
-    *io_diff_addr = 0xFFFFFFFF;
     *reg_diff_idx = 0xFFFFFFFF;
 
     if (our_state->ip != reg_ip)
@@ -556,6 +566,17 @@ compare_states(uint32_t *mem_diff_addr, uint32_t *io_diff_addr,
 
     if (our_state->pit_lobyte_pending != io_hi_lo)
         flags |= DIV_IO_HI_LO;
+
+    return flags;
+}
+
+static uint32_t
+compare_states_full(uint32_t *mem_diff_addr, uint32_t *io_diff_addr,
+                    uint32_t *reg_diff_idx)
+{
+    uint32_t flags = compare_states_cheap(reg_diff_idx);
+    *mem_diff_addr = 0xFFFFFFFF;
+    *io_diff_addr = 0xFFFFFFFF;
 
     /* Memory: compare [0, 0xF0000) then [0xF0100, end) */
     for (uint32_t a = 0; a < REF_REGS_BASE; a++) {
@@ -741,6 +762,22 @@ report_divergence(uint32_t dflags, uint32_t mem_addr, uint32_t io_addr,
     fflush(stderr);
 }
 
+/* EMU-33: counter summary for cheap/full compares. A low full-rate means
+ * fast mode paid off; a high one means REP dominated the workload. Called
+ * at every harness-exit path alongside the step-count summary. */
+static void
+print_compare_counts(void)
+{
+    uint64_t total = compare_cheap_count + compare_full_count;
+    if (total == 0) return;
+    double full_rate = 100.0 * (double)compare_full_count / (double)total;
+    fprintf(stderr, "harness: %llu cheap compares, %llu full compares "
+                    "(%.1f%% full-rate)\n",
+            (unsigned long long)compare_cheap_count,
+            (unsigned long long)compare_full_count,
+            full_rate);
+}
+
 /* ================================================================
  * EMU-24: heartbeat log helpers
  * ================================================================ */
@@ -848,7 +885,7 @@ void harness_step_begin(void)
 void harness_step_end(void)
 {
     /* Self-test mode (HARNESS_SELFTEST=1): after each ref instruction,
-     * snapshot ref → our_state, then call compare_states. A correctly
+     * snapshot ref → our_state, then call compare_states_full. A correctly
      * wired comparator must report zero divergence. Any non-zero result
      * here means the harness is misreading either side's state. */
     if (harness_selftest_mode) {
@@ -875,7 +912,7 @@ void harness_step_end(void)
         our_state->inst_count = inst_counter;
 
         uint32_t ma, ia, ri;
-        uint32_t df = compare_states(&ma, &ia, &ri);
+        uint32_t df = compare_states_full(&ma, &ia, &ri);
         if (df != 0) {
             fprintf(stderr, "SELFTEST FAIL: comparator reports divergence 0x%08X "
                             "after ref→our snapshot (should be 0)\n", df);
@@ -890,6 +927,7 @@ void harness_step_end(void)
             fprintf(stderr, "harness: SELFTEST PASS — %llu steps, "
                             "zero divergences after snapshot-compare each step.\n",
                     (unsigned long long)harness_step_count);
+            print_compare_counts();
             fflush(stderr);
             exit(0);
         }
@@ -933,9 +971,41 @@ void harness_step_end(void)
                 (unsigned long long)harness_step_count);
     }
 
-    /* Compare */
-    uint32_t mem_addr, io_addr, reg_idx;
-    uint32_t dflags = compare_states(&mem_addr, &io_addr, &reg_idx);
+    /* Compare.
+     *
+     * EMU-33: in fast mode, run only the cheap comparator per step and
+     * upgrade to a full scan post-step when either (a) a REP-prefixed
+     * instruction was active during this step (a REP can touch up to 64KB
+     * in a single step from the harness's perspective — register-only
+     * checks would miss per-byte writes), or (b) cheap already found a
+     * divergence and we need mem_addr / io_addr populated for the report.
+     *
+     * Normal mode (default): full compare every step, as before. */
+    uint32_t mem_addr = 0xFFFFFFFF;
+    uint32_t io_addr  = 0xFFFFFFFF;
+    uint32_t reg_idx  = 0xFFFFFFFF;
+    uint32_t dflags;
+
+    if (harness_fast_compare) {
+        dflags = compare_states_cheap(&reg_idx);
+        compare_cheap_count++;
+
+        /* Either side's rep_override_en being nonzero post-step means REP
+         * was in play during this step (EMU-30 decrements at top-of-step,
+         * so a REP that was active during decode is still visible here —
+         * either still nonzero if it iterated, or just decremented to 0). */
+        int rep_this_step = (our_state->rep_override_en != 0)
+                         || (rep_override_en != 0);
+        int need_full = (dflags != 0) || rep_this_step;
+
+        if (need_full) {
+            dflags = compare_states_full(&mem_addr, &io_addr, &reg_idx);
+            compare_full_count++;
+        }
+    } else {
+        dflags = compare_states_full(&mem_addr, &io_addr, &reg_idx);
+        compare_full_count++;
+    }
 
     /* EMU-25 debug: dump state at interesting step */
     if (harness_step_count == 65771 || harness_step_count == 65770) {
@@ -960,6 +1030,7 @@ void harness_step_end(void)
         report_divergence(dflags, mem_addr, io_addr, reg_idx);
         fprintf(stderr, "harness: halting at step %llu due to divergence.\n",
                 (unsigned long long)harness_step_count);
+        print_compare_counts();
         fflush(stderr);
         exit(2);
     }
@@ -1010,6 +1081,7 @@ if (harness_step_count >= harness_step_limit) {
                 mem[0x28], mem[0x29], mem[0x2A], mem[0x2B],
                 mem[0x29], mem[0x28], mem[0x2B], mem[0x2A]);
 
+        print_compare_counts();
         fflush(stderr);
         exit(0);
     }
@@ -1201,6 +1273,19 @@ maybe_setup_kbd_input(void)
     fflush(stderr);
 }
 
+/* EMU-33: HARNESS_FAST_COMPARE=1 activates fast-compare mode. */
+static void
+maybe_setup_fast_compare(void)
+{
+    const char *env = getenv("HARNESS_FAST_COMPARE");
+    if (!env || strcmp(env, "1") != 0) return;
+    harness_fast_compare = 1;
+    fprintf(stderr, "harness: fast compare mode active "
+                    "(per-step memory scan skipped; full compare "
+                    "on REP and on divergence).\n");
+    fflush(stderr);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3 || argc > 4) {
@@ -1316,6 +1401,7 @@ int main(int argc, char **argv)
      * and before reference_main() runs any PUTCHAR. */
     maybe_setup_split_output();
     maybe_setup_kbd_input();
+    maybe_setup_fast_compare();
 
     return reference_main(ref_argc, ref_argv);
 }
